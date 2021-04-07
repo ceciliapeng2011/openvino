@@ -18,28 +18,29 @@
 
 #include <frontend_manager/frontend_manager.hpp>
 #include <fstream>
+#include <string>
 
 #include "place.hpp"
 
 namespace ngraph {
 namespace frontend {
 
-class FrontEndPDPD;
-
 class NGRAPH_API InputModelPDPD : public InputModel
 {
     // TODO: replace it by already deserialized proto hidden under some Impl class
     // TODO: avoid using explicit format-dependent data stuctures here, hide it under some Impl class
-   
+
     friend class FrontEndPDPD;
+    std::vector<std::vector<std::shared_ptr<PlacePDPD>>> places_map;    
 
 public:
+    void* fw_ptr; // TODO: shared_ptr<paddle::framework::proto::ProgramDesc>
     std::string path;
-    std::string model_file;
     std::ifstream weights_stream;
     bool weights_composed = false;
 
-    InputModelPDPD (const std::string& _path) : path(_path) {}
+    InputModelPDPD (const std::string& _path);
+    ~InputModelPDPD ();
 };
 
 } // namespace frontend

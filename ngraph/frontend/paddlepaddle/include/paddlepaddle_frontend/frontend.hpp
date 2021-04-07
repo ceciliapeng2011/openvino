@@ -25,6 +25,7 @@ namespace frontend {
 
 class NGRAPH_API FrontEndPDPD : public FrontEnd
 {
+    std::shared_ptr<ngraph::Function> convert_model(std::shared_ptr<ngraph::frontend::InputModelPDPD> model) const;
 public:
 
     FrontEndPDPD ()

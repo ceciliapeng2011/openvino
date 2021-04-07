@@ -120,21 +120,20 @@ bool endsWith(const std::string &str, const std::string &suffix) {
     return false;
 }
 
+} // namespace pdpd
+
 std::shared_ptr<ngraph::Function>
-    convert_model(std::shared_ptr<ngraph::frontend::InputModelPDPD> model)
+    ngraph::frontend::FrontEndPDPD::convert_model(std::shared_ptr<ngraph::frontend::InputModelPDPD> model) const
 {
     std::cout << "Convert Model Start" << std::endl;    
     
-    paddle::framework::proto::ProgramDesc fw_model;
-    std::ifstream pb_stream(model->model_file, std::ios::binary);
-    std::cout << "Model Parsed: " << fw_model.ParseFromIstream(&pb_stream) << std::endl;
-
     std::map<std::string, std::shared_ptr<ngraph::Node>> nodes_dict;
     ngraph::ParameterVector parameter_nodes;
     ngraph::ResultVector result_nodes;
-
-    std::cout << "Blocks number: " << fw_model.blocks().size() << std::endl;
-    const auto& global_block = fw_model.blocks()[0];
+    
+    auto fw_model = (paddle::framework::proto::ProgramDesc*)model->fw_ptr;
+    std::cout << "Blocks number: " << fw_model->blocks().size() << std::endl;
+    const auto& global_block = fw_model->blocks()[0];
     // We need to read variables in sorted by name order. This is the order variables written in composed file.
     std::map<std::string, paddle::framework::proto::VarDesc> sorted_vars;
     for (auto& var : global_block.vars())
@@ -143,35 +142,38 @@ std::shared_ptr<ngraph::Function>
     }
     for (const auto& name_var : sorted_vars)
     {
-        if (endsWith(name_var.first, "feed") || endsWith(name_var.first, "fetch"))
+        if (pdpd::endsWith(name_var.first, "feed") || pdpd::endsWith(name_var.first, "fetch"))
             continue;
         if (!name_var.second.persistable())
             continue;
-        nodes_dict[name_var.first] = read_tensor(name_var.second, model);
+        nodes_dict[name_var.first] = pdpd::read_tensor(name_var.second, model);
     }
     std::cout << "Reading consts finished" << std::endl;
 
-    std::map<std::string, CreatorFunction> CREATORS_MAP = get_supported_ops();
+    std::map<std::string, pdpd::CreatorFunction> CREATORS_MAP = pdpd::get_supported_ops();
 
-    for (const auto& block : fw_model.blocks()) {
+    for (int i = 0; i < fw_model->blocks().size(); i++) {
+        const auto &block = fw_model->blocks()[i];
+        const auto& places = model->places_map[i];
         std::map<std::string, paddle::framework::proto::VarType> vars_dict;
         for (const auto &var : block.vars()) {
             vars_dict[var.name()] = var.type();
         }
-        for (int i = 0; i < block.ops_size(); i++) {
+        for (int j = 0; j < places.size(); j++) {
             std::cerr << "Observing index i = " << i << "\n";
-            const auto &op = block.ops()[i];
-            std::cerr << "Observing " << op.type() << "\n";
+            const auto &place = places[j];
+            auto op = (paddle::framework::proto::OpDesc*)place->op;
+            std::cerr << "Observing " << op->type() << "\n";
             std::map<std::string, google::protobuf::RepeatedPtrField<std::string>> outputs_dict;
-            for (const auto &output : op.outputs()) {
+            for (const auto &output : op->outputs()) {
                 outputs_dict[output.parameter()] = output.arguments();
                 std::cerr << output.parameter() << "\n";
             }
             std::map<std::string, google::protobuf::RepeatedPtrField<std::string>> inputs_dict;
-            for (const auto &input : op.inputs()) {
+            for (const auto &input : op->inputs()) {
                 inputs_dict[input.parameter()] = input.arguments();
             }
-            if (op.type() == "feed") {
+            if (op->type() == "feed") {
                 auto layer_name = outputs_dict["Out"][0];
                 std::cout << "Creating parameter: " << layer_name << std::endl;
                 auto var = vars_dict[layer_name];
@@ -194,14 +196,14 @@ std::shared_ptr<ngraph::Function>
                 nodes_dict[layer_name] = param;
                 parameter_nodes.push_back(param);
                 std::cout << "Parameter created" << std::endl;
-            } else if (op.type() == "fetch") {
+            } else if (op->type() == "fetch") {
                 auto input_node = inputs_dict["X"][0];
                 MY_ASSERT(nodes_dict.find(input_node) != nodes_dict.end());
                 auto result = std::make_shared<ngraph::opset6::Result>(nodes_dict[input_node]);
                 result->set_friendly_name(input_node);
                 result_nodes.push_back(result);
             } else {
-                auto node = make_ng_node(inputs_dict, nodes_dict, op, block, CREATORS_MAP);
+                auto node = pdpd::make_ng_node(inputs_dict, nodes_dict, *op, block, CREATORS_MAP);
                 std::string layer_name;
                 for (const auto& outs : outputs_dict) {
                     for (const auto& fieldName : outs.second) {
@@ -223,35 +225,13 @@ std::shared_ptr<ngraph::Function>
     return std::make_shared<ngraph::Function>(result_nodes, parameter_nodes);
 }
 
-}
-
 std::shared_ptr<ngraph::Function> ngraph::frontend::FrontEndPDPD::convert(InputModel::Ptr model) const {
     std::cerr << "[ INFO ] PFrontEndPDPD::convert invoked\n";
-    auto pdpd_model = std::dynamic_pointer_cast<ngraph::frontend::InputModelPDPD>(model);
-    std::string ext = ".pdmodel";
-    if (pdpd_model->path.length() >= ext.length() &&
-        (0 ==
-         pdpd_model->path.compare(pdpd_model->path.length() - ext.length(), ext.length(), ext)))
-    {
-        pdpd_model->weights_composed = true;
-        pdpd_model->model_file = pdpd_model->path;
-        auto weights_file =
-            pdpd_model->path.replace(pdpd_model->path.size() - ext.size(), ext.size(), ".pdiparams");
-        pdpd_model->weights_stream = std::ifstream(weights_file, std::ios::binary);
-        if (!pdpd_model->weights_stream || !pdpd_model->weights_stream.is_open())
-        {
-            std::cout << "File not opened" << std::endl;
-        }
-    }
-    else
-    {
-        pdpd_model->weights_composed = false;
-        pdpd_model->model_file = pdpd_model->path + "/__model__";
-    }
-    auto f = pdpd::convert_model(pdpd_model);
+    auto pdpd_model = std::dynamic_pointer_cast<ngraph::frontend::InputModelPDPD>(model);    
+    auto f = convert_model(pdpd_model);
     std::cerr << "[ INFO ] Resulting nGraph function contains " << f->get_ops().size() << "\n";
     return f;
 }
 
-}
-}
+} // namespace frontend
+} // namespace ngraph

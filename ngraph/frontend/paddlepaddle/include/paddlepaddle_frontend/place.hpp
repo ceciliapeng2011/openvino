@@ -23,7 +23,9 @@ namespace frontend {
 
 class PlacePDPD : public Place
 {
-    // TODO
+public:
+    const void* op; // TODO: make it cleaner
+    PlacePDPD (const void* _op) : op(_op) {}
 };
 
 } // namespace frontend
