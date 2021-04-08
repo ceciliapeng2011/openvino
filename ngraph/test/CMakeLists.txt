@@ -47,7 +47,6 @@ set(SRC
     eval.cpp
     file_util.cpp
     float16.cpp
-    frontend/frontend_manager.cpp
     graph_rewrite.cpp
     includes.cpp
     input_output_assign.cpp
@@ -440,11 +439,19 @@ foreach(BACKEND_NAME ${ACTIVE_BACKEND_LIST})
     message(STATUS "Adding unit test for backend ${BACKEND_NAME}")
 endforeach()
 
+# SOURCE FOR FRONTEND TESTING
+# TODO: try to find a way to move it out of common CMakeLists
+file(GLOB_RECURSE FRONTEND_TESTS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/frontend/*.cpp)
+# ---TODO FIXME --DO_NOT_RELEASE-- (mnosov)
+set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp) # DEBUG trick to disable all unit tests for faster build
+# --- END OF --DO_NOT_RELEASE--
+set(SRC ${FRONTEND_TESTS_SRC} ${SRC})
+#-----
+
 add_executable(unit-test ${SRC})
 
 target_include_directories(unit-test PRIVATE ".")
 target_include_directories(unit-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runtime)
-target_include_directories(unit-test PRIVATE ${FRONTEND_INCLUDE_PATH})
 
 add_definitions("-DCURDIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"")
 add_definitions("-DJSON_INCLUDES=\"${JSON_INCLUDE_DIR}\"")
@@ -494,7 +501,7 @@ if (MSVC)
     target_compile_options(unit-test PRIVATE "/bigobj")
 endif()
 
-target_link_libraries(unit-test PRIVATE ie_backend frontend_manager)
+target_link_libraries(unit-test PRIVATE ie_backend)
 
 if (NGRAPH_ONNX_IMPORT_ENABLE)
     target_link_libraries(unit-test PRIVATE onnx_importer onnx_editor)
@@ -506,3 +513,16 @@ if (NGRAPH_INTERPRETER_ENABLE)
 endif()
 
 MESSAGE("HERE2" ${ONNX_IMPORT_INCLUDE_DIR})
+
+############ FRONTEND ############
+# TODO: try to find a way to move it outside of general CMAKE
+target_include_directories(unit-test PRIVATE ${FRONTEND_INCLUDE_PATH})
+target_link_libraries(unit-test PRIVATE frontend_manager)
+
+target_include_directories(unit-test PRIVATE ${FRONTEND_INCLUDE_PATH})
+target_link_libraries(unit-test PRIVATE frontend_manager)
+
+#PaddlePaddle
+target_include_directories(unit-test PRIVATE ${FRONTEND_BASE_PATH}/paddlepaddle/include)
+target_link_libraries(unit-test PRIVATE paddlepaddle_frontend)
+### END FRONTEND ###
