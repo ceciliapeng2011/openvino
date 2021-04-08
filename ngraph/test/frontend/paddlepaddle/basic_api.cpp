@@ -85,13 +85,13 @@ TEST_P(FrontEndBasicTest, testInputModel_getInputsOutputs)
     std::vector<Place::Ptr> inputs;
     ASSERT_NO_THROW(inputs = m_inputModel->getInputs());
     checkPlaces(inputs, [&](Place::Ptr place) {
-        //TODO: shall we verify that each 'place->isInput() returns true'?
+        EXPECT_TRUE(place->isInput());
     });
 
     std::vector<Place::Ptr> outputs;
     ASSERT_NO_THROW(outputs = m_inputModel->getOutputs());
     checkPlaces(outputs, [&](Place::Ptr place) {
-        //TODO: shall we verify that each 'place->isOutput() returns true'?
+        EXPECT_TRUE(place->isOutput());
     });
 }
 
@@ -101,12 +101,16 @@ TEST_P(FrontEndBasicTest, testInputModel_getPlaceByTensorName)
 
     auto testGetPlaceByTensorName = [&](const std::vector<Place::Ptr>& places) {
         EXPECT_GT(places.size(), 0);
-        std::for_each(places.begin(), places.end(), [&](Place::Ptr place) {
-            //TODO: check if this expectation is correct
+        for (auto place : places) {
+            ASSERT_NE(place, nullptr);
             for (auto name : place->getNames()) {
-                EXPECT_EQ(place, m_inputModel->getPlaceByTensorName(name));
+                EXPECT_NE(name, std::string());
+                Place::Ptr placeByName;
+                ASSERT_NO_THROW(placeByName = m_inputModel->getPlaceByTensorName(name));
+                ASSERT_NE(placeByName, nullptr);
+                EXPECT_TRUE(placeByName->isEqual(place));
             }
-        });
+        }
     };
 
     std::vector<Place::Ptr> outputs;
@@ -152,26 +156,30 @@ TEST_P(FrontEndBasicTest, testInputModel_overrideAll_empty)
     ASSERT_NO_THROW(doLoadFromFile());
     using GetPlaces = std::function<std::vector<Place::Ptr>()>;
     using OverrideEmpty = std::function<void(void)>;
-    using CustomCheck = std::function<void(Place::Ptr)>;
+    using CustomCheck = std::function<void(std::string)>;
     auto verifyOverride = [](GetPlaces getCB, OverrideEmpty overrideCB, CustomCheck customCB) {
         std::vector<Place::Ptr> places;
-        std::vector<Place::Ptr> placesAfter;
+        std::vector<Place::Ptr> newPlaces;
         ASSERT_NO_THROW(places = getCB());
         ASSERT_NO_THROW(overrideCB());
-        ASSERT_NO_THROW(placesAfter = getCB());
-        ASSERT_EQ(placesAfter.size(), 0);
-        std::for_each(places.begin(), places.end(), [&](Place::Ptr place) { customCB(place); });
+        ASSERT_NO_THROW(newPlaces = getCB());
+        ASSERT_EQ(newPlaces.size(), 0);
+        std::for_each(places.begin(), places.end(), [&](Place::Ptr place) {
+            for (auto name : place->getNames()) {
+                customCB(name);
+            }
+        });
     };
     verifyOverride([&]() { return m_inputModel->getOutputs(); },
                    [&]() { m_inputModel->overrideAllOutputs({}); },
-                   [&](Place::Ptr place) {
-                       // TODO: should we check that all previous outputs will return false to Place::isOutput()?
+                   [&](const std::string &name) {
+                       EXPECT_FALSE(m_inputModel->getPlaceByTensorName(name)->isOutput());
                    });
 
     verifyOverride([&]() { return m_inputModel->getInputs(); },
                    [&]() { m_inputModel->overrideAllInputs({}); },
-                   [&](Place::Ptr place) {
-                       // TODO: should we check that all previous outputs will return false to Place::isInput()?
+                   [&](const std::string &name) {
+                       EXPECT_FALSE(m_inputModel->getPlaceByTensorName(name)->isInput());
                    });
 }
 
