@@ -3,6 +3,7 @@
 //
 
 #include <memory>
+#include <regex>
 #include <frontend_manager/frontend_manager.hpp>
 #include <paddlepaddle_frontend/frontend.hpp>
 
@@ -17,7 +18,11 @@ static const std::string PATH_TO_MODELS = "/paddlepaddle/models/";
 using BasicTestParam = std::string;
 
 std::string getTestCaseName(const testing::TestParamInfo<BasicTestParam> &obj) {
-    return obj.param;
+    auto fileName = obj.param;
+    // need to replace special characters to create valid test case name
+    fileName = std::regex_replace(fileName, std::regex("[/\\.]"), "_");
+    std::cout << "Test case name: " << fileName << std::endl;
+    return fileName;
 }
 
 class PDPDBasicTest : public ::testing::TestWithParam<BasicTestParam> {
@@ -29,7 +34,7 @@ public:
 
     void initParamTest() {
         m_modelFile = std::string(TEST_FILES) + PATH_TO_MODELS + GetParam();
-        std::cout << "model file:" << m_modelFile << std::endl;
+        std::cout << "Model: " << m_modelFile << std::endl;
     }
 
     void SetUp() override {
@@ -178,6 +183,7 @@ TEST_P(PDPDBasicTest, DISABLED_testInputModel_setPartialShape)
 
 static const std::vector<std::string> models {
         std::string("conv2d"),
+        std::string("conv2d_s/conv2d.pdmodel"),
 };
 
 INSTANTIATE_TEST_CASE_P(PDPDBasicTest, PDPDBasicTest,
