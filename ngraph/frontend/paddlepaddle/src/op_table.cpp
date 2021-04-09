@@ -30,6 +30,9 @@
 #include "op/concat.hpp"
 #include "op/cast.hpp"
 #include "op/softmax.hpp"
+#include "op/yolo_box.hpp"
+#include "op/transpose2.hpp"
+#include "op/multiclass_nms.hpp"
 
 #include "op_table.hpp"
 
@@ -59,6 +62,9 @@ std::map<std::string, CreatorFunction> get_supported_ops() {
             {"nearest_interp_v2", op::nearest_interp_v2},
             {"concat", op::concat},
             {"cast", op::cast},
+            {"yolo_box", op::yolo_box},
+            {"transpose2", op::transpose2},
+            {"multiclass_nms3", op::multiclass_nms},
             {"softmax", op::softmax}
     };
 };
