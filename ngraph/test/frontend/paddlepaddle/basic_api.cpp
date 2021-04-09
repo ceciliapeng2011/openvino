@@ -17,25 +17,27 @@ static const std::string PATH_TO_MODELS = "/paddlepaddle/models/";
 
 // TODO: in future, move it to shared header file so that every frontend can run same test suite
 // ----- This is common part for all frontends -----
-using BasicTestParam = std::string;
+using BasicTestParam = std::tuple<std::string, std::string>;
 
 std::string getTestCaseName(const testing::TestParamInfo<BasicTestParam> &obj) {
-    auto fileName = obj.param;
+    std::string fe, fileName;
+    std::tie(fe, fileName) = obj.param;
     // need to replace special characters to create valid test case name
     fileName = std::regex_replace(fileName, std::regex("[/\\.]"), "_");
-    std::cout << "Test case name: " << fileName << std::endl;
-    return fileName;
+    return fe + "_" + fileName;
 }
 
 class FrontEndBasicTest : public ::testing::TestWithParam<BasicTestParam> {
 public:
+    std::string                      m_feName;
     std::string                      m_modelFile;
     FrontEndManager                  m_fem;
     FrontEnd::Ptr                    m_frontEnd;
     InputModel::Ptr                  m_inputModel;
 
     void initParamTest() {
-        m_modelFile = std::string(TEST_FILES) + PATH_TO_MODELS + GetParam();
+        std::tie(m_feName, m_modelFile) = GetParam();
+        m_modelFile = std::string(TEST_FILES) + PATH_TO_MODELS + m_modelFile;
         std::cout << "Model: " << m_modelFile << std::endl;
     }
 
@@ -49,7 +51,7 @@ public:
     void doLoadFromFile() {
         std::vector<std::string> frontends;
         ASSERT_NO_THROW(frontends = m_fem.availableFrontEnds());
-        ASSERT_NO_THROW(m_frontEnd = m_fem.loadByFramework(PDPD));
+        ASSERT_NO_THROW(m_frontEnd = m_fem.loadByFramework(m_feName));
         ASSERT_NE(m_frontEnd, nullptr);
         ASSERT_NO_THROW(m_inputModel = m_frontEnd->loadFromFile(m_modelFile));
         ASSERT_NE(m_inputModel, nullptr);
@@ -205,8 +207,11 @@ static const std::vector<std::string> models {
         std::string("conv2d"),
         std::string("conv2d_s/conv2d.pdmodel"),
         std::string("conv2d_relu/conv2d_relu.pdmodel"),
+        std::string("2in_2out/2in_2out.pdmodel"),
 };
 
 INSTANTIATE_TEST_CASE_P(PDPDBasicTest, FrontEndBasicTest,
-                        ::testing::ValuesIn(models),
+                        ::testing::Combine(
+                            ::testing::Values(std::string(PDPD)),
+                            ::testing::ValuesIn(models)),
                         getTestCaseName);
