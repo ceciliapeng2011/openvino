@@ -8,6 +8,7 @@ from save_model import saveModel
 # scores shape (N, C, M) 
 def multiclass_nms(name : str, bboxes, scores, attrs : dict):
     import paddle as pdpd
+    from ppdet.modeling import ops
     pdpd.enable_static()
    
     with pdpd.static.program_guard(pdpd.static.Program(), pdpd.static.Program()):
@@ -16,7 +17,7 @@ def multiclass_nms(name : str, bboxes, scores, attrs : dict):
         node_scores = pdpd.static.data(name='scores', shape=scores.shape,
                                 dtype=scores.dtype, lod_level=1)
 
-        output = pdpd.fluid.layers.multiclass_nms(bboxes=node_boxes,
+        output = ops.multiclass_nms(bboxes=node_boxes,
                                         scores=node_scores,
                                         background_label=attrs['background_label'],
                                         score_threshold=attrs['score_threshold'],
@@ -24,36 +25,30 @@ def multiclass_nms(name : str, bboxes, scores, attrs : dict):
                                         nms_threshold=attrs['nms_threshold'],
                                         keep_top_k=attrs['keep_top_k'],
                                         normalized=attrs['normalized'],
-                                        nms_eta=attrs['nms_eta'])                                                
+                                        return_index=True)                                                
 
         cpu = pdpd.static.cpu_places(1)
         exe = pdpd.static.Executor(cpu[0])
         # startup program will call initializer to initialize the parameters.
         exe.run(pdpd.static.default_startup_program())
        
-        outs = exe.run(
+        out_np, nms_rois_num_np, index_np = exe.run(
             feed={'bboxes': bboxes, 'scores': scores},
-            fetch_list=[output], return_numpy=False)
+            fetch_list=output, return_numpy=False)
+
+        out = np.array(out_np)
+        index = np.array(index_np)
+        nms_rois_num = np.array(nms_rois_num_np)
 
         # Save inputs in order of ngraph function, to facilite Fuzzy test, 
         # which accepts inputs and outputs in this order as well. 
-        #saveModel(name, exe, feedkeys=['bboxes', 'scores'], fetchlist=[output], inputs=[bboxes, scores], outputs=outs)
-        saveModel(name, exe, feedkeys=['bboxes', 'scores'], fetchlist=[output], inputs=[], outputs=[])
+        saveModel(name, exe, feedkeys=['bboxes', 'scores'], fetchlist=output, inputs=[bboxes, scores], outputs=[out, index, nms_rois_num])
 
     #
-    lod_num = len(outs)
-    w, h = outs[0].shape()
-    if w == 1 and h == 1:
-        return None
-    lod_shape = [lod_num, w, h]
-    result = np.zeros(lod_shape)
-
-    for lod in outs:
-        rows, length = lod.shape()
-        for i in range(0, rows):
-            for index in range(0, length):
-                result[0][i][index] = lod._get_float_element(i * 6 + index)
-    return result
+    print('out_np: ', out.shape)
+    print('index_np: ', index.shape)
+    print('nms_rois_num_np: ', nms_rois_num.shape, nms_rois_num)
+    return [out, index, nms_rois_num]
 
 def onnx_run(bboxes, scores, onnx_model="../models/multiclass_nms_test1/multiclass_nms_test1.onnx"):
     import onnxruntime as rt
@@ -64,7 +59,7 @@ def onnx_run(bboxes, scores, onnx_model="../models/multiclass_nms_test1/multicla
     for output in sess.get_outputs():
         print(output.name)        
     pred_onx = sess.run(None, {"bboxes": bboxes, "scores": scores})
-    print(pred_onx)
+    #print(type(pred_onx), len(pred_onx))
     return pred_onx
 
 def OV_frontend_run(bboxes, scores, path_to_pdpd_model="../models/multiclass_nms_test1/", user_shapes=[]):
@@ -101,17 +96,23 @@ def OV_frontend_run(bboxes, scores, path_to_pdpd_model="../models/multiclass_nms
     print(type(pred_ie))
     return pred_ie    
 
-def checker(outs, dump=False):
+def checker(outs, name, dump=False):
     if type(outs) is list:
+        print("\n###{} list".format(name))
         for i in range(len(outs)):      
             print("output{} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
             if(dump):
                 print(outs[i])
     if type(outs) is dict:
+        print("\n###{} dict".format(name))
         for i in outs:
             print("output{} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
             if(dump):
-                print(outs[i])            
+                print(outs[i]) 
+    if type(outs) is np.ndarray:
+        print("\n###{} numpy.ndarray".format(name))
+        print("output shape {}, type {} ".format(outs.shape, outs.dtype))
+
 
 def print_2Dlike(data, filename):
     with open(filename+".txt", 'w') as f:
@@ -130,9 +131,15 @@ def print_2Dlike(data, filename):
     f.close()            
 
 def validate(pred_pdpd: list, pred_onx: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
-    checker(pred_pdpd)
-    checker(pred_onx)
-    checker(pred_ie)
+    checker(pred_pdpd, "paddle")
+    #checker(pred_onx, "onnx")
+    checker(pred_ie, "openvino")
+    '''
+    comp1 = np.all(np.isclose(pred_pdpd, pred_onx, rtol=rtol, atol=atol, equal_nan=True))
+    if not comp1: 
+        print('\033[91m' + "PDPD and ONNX results are different "+ '\033[0m')
+    else:
+        print('\033[92m' + "PDPD, ONNX and IE results are identical"+ '\033[0m')
 
     # compare results: IE vs PDPD vs ONNX
     idx = 0
@@ -160,7 +167,8 @@ def validate(pred_pdpd: list, pred_onx: list, pred_ie: dict, rtol=1e-05, atol=1e
         if comp1 and comp2 and comp3:
             print('\033[92m' + "PDPD, ONNX and IE results are identical at {} ".format(idx) + '\033[0m')
 
-        idx += 1            
+        idx += 1   
+    '''         
 
 '''
 ref: paddle/fluid/tests/unittests/test_multiclass_nms_op.py
@@ -208,14 +216,14 @@ def main():
         return exps / np.sum(exps)
 
     # case 2
-    N = 7  #onnx multiclass_nms only supports input[batch_size] == 1.
+    N = 1  #onnx multiclass_nms only supports input[batch_size] == 1.
     M = 1200
     C = 21
     BOX_SIZE = 4
-    background = 0
+    background = -1
     nms_threshold = 0.3
-    nms_top_k = 400
-    keep_top_k = 200
+    nms_top_k = 400  #max_output_boxes_per_class
+    keep_top_k = -1
     score_threshold = 0.02
 
     scores = np.random.random((N * M, C)).astype('float32')
@@ -265,11 +273,15 @@ def main():
     # step 1. generate paddle model
     pred_pdpd = multiclass_nms('multiclass_nms_test1', data_bboxes, data_scores, pdpd_attrs)
 
+    from multiclass_nms3_ngraph import ngraph_multiclass_nms3
+    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, score_threshold=score_threshold, iou_threshold=nms_threshold,
+                           max_output_boxes_per_class=nms_top_k, output_type='i32')
+
     # step 2. generate onnx model
     # !paddle2onnx --model_dir=../models/yolo_box_test1/ --save_file=../models/yolo_box_test1/yolo_box_test1.onnx --opset_version=10
-    import subprocess
-    subprocess.run(["paddle2onnx", "--model_dir=../models/multiclass_nms_test1/", "--save_file=../models/multiclass_nms_test1/multiclass_nms_test1.onnx", "--opset_version=12"])
-    pred_onx = onnx_run(data_bboxes, data_scores)
+    #import subprocess
+    #subprocess.run(["paddle2onnx", "--model_dir=../models/multiclass_nms_test1/", "--save_file=../models/multiclass_nms_test1/multiclass_nms_test1.onnx", "--opset_version=11", "--enable_onnx_checker=True"])
+    #pred_onx = onnx_run(data_bboxes, data_scores)
 
     # step 3. run from frontend API
     #pred_ie = OV_frontend_run(data_bboxes, data_scores)
@@ -277,7 +289,7 @@ def main():
     # step 4. compare 
     # Try different tolerence
     #validate(pred_pdpd, pred_onx, pred_ie)
-   # validate(pred_pdpd, pred_onx, pred_ie, rtol=1e-4, atol=1e-5) 
+    #validate(pred_pdpd, [], pred_ie, rtol=1e-4, atol=1e-5) 
 
 
 if __name__ == "__main__":
