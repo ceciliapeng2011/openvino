@@ -48,7 +48,7 @@ def multiclass_nms(name : str, bboxes, scores, attrs : dict):
     print('out_np: ', out.shape)
     print('index_np: ', index.shape)
     print('nms_rois_num_np: ', nms_rois_num.shape, nms_rois_num)
-    return [out, index, nms_rois_num]
+    return [index, nms_rois_num, out] #the same order of pred_ngraph dict
 
 def onnx_run(bboxes, scores, onnx_model="../models/multiclass_nms_test1/multiclass_nms_test1.onnx"):
     import onnxruntime as rt
@@ -100,13 +100,13 @@ def checker(outs, name, dump=False):
     if type(outs) is list:
         print("\n###{} list".format(name))
         for i in range(len(outs)):      
-            print("output{} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
+            print("output {} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
             if(dump):
                 print(outs[i])
     if type(outs) is dict:
         print("\n###{} dict".format(name))
         for i in outs:
-            print("output{} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
+            print("output {} shape {}, type {} ".format(i, outs[i].shape, outs[i].dtype))
             if(dump):
                 print(outs[i]) 
     if type(outs) is np.ndarray:
@@ -118,9 +118,11 @@ def print_2Dlike(data, filename):
     with open(filename+".txt", 'w') as f:
         print(data.shape, file=f)
         _data = data.copy()
-        _data = np.squeeze(_data)
-        _data.reshape(-1, data.shape[len(data.shape)-1])
+        if len(_data.shape)==1:
+            _data = np.expand_dims(_data, axis=0)
+        assert len(_data.shape)==2
         print(_data.shape, file=f)
+        
         print("\n[", file=f)
         for j in range(_data.shape[0]):
             line=""
@@ -130,58 +132,29 @@ def print_2Dlike(data, filename):
         print("]\n", file=f)
     f.close()            
 
-def validate(pred_pdpd: list, pred_onx: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
-    checker(pred_pdpd, "paddle")
-    #checker(pred_onx, "onnx")
+def validate(pred_ref: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
+    checker(pred_ref, "paddle")
     checker(pred_ie, "openvino")
-    '''
-    comp1 = np.all(np.isclose(pred_pdpd, pred_onx, rtol=rtol, atol=atol, equal_nan=True))
-    if not comp1: 
-        print('\033[91m' + "PDPD and ONNX results are different "+ '\033[0m')
-    else:
-        print('\033[92m' + "PDPD, ONNX and IE results are identical"+ '\033[0m')
 
-    # compare results: IE vs PDPD vs ONNX
-    idx = 0
-    for key in pred_ie:
-        comp1 = np.all(np.isclose(pred_pdpd[idx], pred_onx[idx], rtol=rtol, atol=atol, equal_nan=True))
-        #comp1 = np.all(np.isclose([1,2.1], [1,2], rtol=1e-05, atol=1e-08, equal_nan=True))
-        #np.all(np.isclose(res_pdpd[0], list(res_ie.values())[0], rtol=1e-4, atol=1e-5))
+    if isinstance(pred_ie, list) and isinstance(pred_ref, list):
+        comp1 = np.all(np.isclose(pred_pdpd, pred_onx, rtol=rtol, atol=atol, equal_nan=True))
         if not comp1: 
-            print('\033[91m' + "PDPD and ONNX results are different at {} ".format(idx) + '\033[0m')
+            print('\033[91m' + "PDPD and ONNX results are different "+ '\033[0m')
+        else:
+            print('\033[92m' + "PDPD, ONNX and IE results are identical"+ '\033[0m')
 
-        comp2 = np.all(np.isclose(pred_pdpd[idx], pred_ie[key], rtol=rtol, atol=atol, equal_nan=True))
-        #np.all(np.isclose(res_pdpd[0], list(res_ie.values())[0], rtol=1e-4, atol=1e-5))
-        if not comp2:
-            print('\033[91m' + "PDPD and IE results are different at {} ".format(idx) + '\033[0m')
+    if isinstance(pred_ie, dict) and isinstance(pred_ref, list):
+        idx = 0
+        for key in pred_ie:
+            comp2 = np.all(np.isclose(pred_ref[idx], pred_ie[key], rtol=rtol, atol=atol, equal_nan=True))
+            if not comp2:
+                print('\033[91m' + "PDPD and IE results are different at {} ".format(idx) + '\033[0m')
+                print_2Dlike(pred_ref[idx], "pdpd{}".format(idx))        
+                print_2Dlike(pred_ie[key], "ie{}".format(idx))                  
+            else:
+                print('\033[92m' + "PDPD and IE results are identical at {} ".format(idx) + '\033[0m') 
+            idx += 1          
 
-        comp3 = np.all(np.isclose(pred_ie[key], pred_onx[idx], rtol=rtol, atol=atol, equal_nan=True))
-        #np.all(np.isclose(res_pdpd[0], list(res_ie.values())[0], rtol=1e-4, atol=1e-5))
-        if not comp3:
-            print('\033[91m' + "ONNX and IE results are different at {} ".format(idx) + '\033[0m')            
-
-        print_2Dlike(pred_pdpd[idx], "pdpd{}".format(idx))
-        print_2Dlike(pred_onx[idx], "onnx{}".format(idx))            
-        print_2Dlike(pred_ie[key], "ie{}".format(idx))
-
-        if comp1 and comp2 and comp3:
-            print('\033[92m' + "PDPD, ONNX and IE results are identical at {} ".format(idx) + '\033[0m')
-
-        idx += 1   
-    '''         
-
-'''
-ref: paddle/fluid/tests/unittests/test_multiclass_nms_op.py
-OpTest
-||				
-TestMulticlassNMSLoDInput            /                        TestMulticlassNMSOp
-||								                                        ||						
-TestMulticlassNMS2LoDInput /TestMulticlassNMSNoBox	          TestMulticlassNMS2Op  /  TestMulticlassNMSOpNoOutput
-||								                                        ||
-TestMulticlassNMS3LoDInput				                      TestMulticlassNMS3Op
-||								                                        ||
-TestMulticlassNMS3LoDNoOutput			                    TestMulticlassNMS3OpNoOutput
-'''
 def main():
     # multiclass_nms
 
@@ -215,6 +188,7 @@ def main():
         exps = np.exp(shiftx)
         return exps / np.sum(exps)
 
+    '''
     # case 2
     N = 1  #onnx multiclass_nms only supports input[batch_size] == 1.
     M = 1200
@@ -245,6 +219,7 @@ def main():
         'normalized': False,
         'nms_eta': 1.0
     }
+    '''
 
     '''
     M = 1200
@@ -262,7 +237,32 @@ def main():
         name='bboxes', shape=[M, C, BOX_SIZE], dtype='float32')
     scores_data = fluid.data(
         name='scores', shape=[N, C, M], dtype='float32') 
-    '''   
+    ''' 
+    boxes = np.array([[
+        [0.0, 0.0, 1.0, 1.0],
+        [0.0, 0.1, 1.0, 1.1],
+        [0.0, -0.1, 1.0, 0.9],
+        [0.0, 10.0, 1.0, 11.0],
+        [0.0, 10.1, 1.0, 11.1],
+        [0.0, 100.0, 1.0, 101.0]
+    ]]).astype(np.float32)
+    scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
+                            [0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
+    score_threshold = 0.0
+    background = -1
+    iou_threshold = 0.5
+    max_output_boxes_per_class = 2
+
+    pdpd_attrs = {
+        'nms_type': 'multiclass_nms3', #PDPD Op type
+        'background_label': background,
+        'score_threshold': score_threshold,
+        'nms_top_k': max_output_boxes_per_class,
+        'nms_threshold': iou_threshold,
+        'keep_top_k': -1,  #keep all
+        'normalized': False,
+        'nms_eta': 1.0
+    }       
 
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)  
@@ -274,12 +274,11 @@ def main():
     pred_pdpd = multiclass_nms('multiclass_nms_test1', data_bboxes, data_scores, pdpd_attrs)
 
     from multiclass_nms3_ngraph import ngraph_multiclass_nms3
-    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, score_threshold=score_threshold, iou_threshold=nms_threshold,
-                           max_output_boxes_per_class=nms_top_k, output_type='i32')
+    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, pdpd_attrs)
 
     # step 2. generate onnx model
     # !paddle2onnx --model_dir=../models/yolo_box_test1/ --save_file=../models/yolo_box_test1/yolo_box_test1.onnx --opset_version=10
-    #import subprocess
+    import subprocess
     #subprocess.run(["paddle2onnx", "--model_dir=../models/multiclass_nms_test1/", "--save_file=../models/multiclass_nms_test1/multiclass_nms_test1.onnx", "--opset_version=11", "--enable_onnx_checker=True"])
     #pred_onx = onnx_run(data_bboxes, data_scores)
 
@@ -288,7 +287,7 @@ def main():
 
     # step 4. compare 
     # Try different tolerence
-    #validate(pred_pdpd, pred_onx, pred_ie)
+    validate(pred_pdpd, pred_ngraph)
     #validate(pred_pdpd, [], pred_ie, rtol=1e-4, atol=1e-5) 
 
 

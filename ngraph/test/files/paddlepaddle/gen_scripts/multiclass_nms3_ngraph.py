@@ -303,26 +303,10 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
     print('\033[92m' + "executable_network output {} ".format(output) + '\033[0m')
     
-    selected_indices = None
-    selected_scores = None
-    valid_outputs = None
     for key, value in output.items():
         print("# Ngraph result:\n", key, value.shape, value.dtype)
-        
-        if len(value.shape) == 1:
-            valid_outputs = value
-        elif isinstance(value[0][0], np.float32):
-            selected_scores = value
-        else:
-            selected_indices = value
-    return 
 
-    pred_ngraph_indice = []
-    for i in range(valid_outputs[0]):
-        print("index: {}, scores: {}".format(selected_indices[i], selected_scores[i]))
-        pred_ngraph_indice.append(selected_indices[i])
-
-    return pred_ngraph_indice
+    return output #dict
 
 
 def onnx_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
