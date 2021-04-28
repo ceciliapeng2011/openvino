@@ -255,7 +255,11 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         nms_type = pdpd_attrs['nms_type']
         if nms_type in ['multiclass_nms2', 'matrix_nms', 'multiclass_nms3']:
             # output node['Index']
-            final_indices = ng.squeeze(bbox_id, axes=const_values[0], name='Index')
+            final_indices = ng.gather(bbox_id, indices, axis=const_values[1], name='final_indices') #axis=1
+            #return [indices, bbox_id, final_indices]
+            #nong-bg-bbox_id (1, 4, 1) int32, final_indices (1, 4, 1) int32, TopK_73.1 (4,) int32
+            final_indices = ng.squeeze(final_indices, axes=const_values[0], name='Index') #axes=[0]
+
             outputs[1] = final_indices
 
             # output node['NmsRoisNum']
