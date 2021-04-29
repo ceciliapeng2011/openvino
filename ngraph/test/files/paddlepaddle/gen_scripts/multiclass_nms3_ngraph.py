@@ -33,7 +33,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         kwargs = {'center_point_box': 0}
 
         if normalized:     
-            select_bbox_indices = ng.non_max_suppression(node_bboxes, node_scores,
+            node_nms = ng.non_max_suppression(node_bboxes, node_scores,
                                                 max_output_boxes_per_class=node_max_output_boxes_per_class,
                                                 iou_threshold=node_iou_threshold,
                                                 output_type='i32',
@@ -78,39 +78,15 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
         #return [class_id, squeezed_class_id, bbox_id] #CHEKER pass
         #(4,1) (4,) (4,1) @int32
-                
-        import onnx
-        from onnx import helper
-        from onnx import AttributeProto, TensorProto, GraphProto
-        import onnx
-        from onnx import helper, shape_inference
-        from onnx import TensorProto            
-        print('\033[94m' + "@@#############################debugging {}".format(int(TensorProto.INT32))+ '\033[0m')       
-        print('\033[94m' + "@@#############################debugging {}".format(np.array([False]).astype(np.bool).dtype)+ '\033[0m')       
-        
+                        
+        node_background = ng.constant(np.array([background]), dtype=np.int32, name='node_background')
+        notequal_background = ng.not_equal(squeezed_class_id, node_background, name='notequal_background')
+        #return [class_id, squeezed_class_id, notequal_background] #CHEKER pass
         # FIXME: have to hardcode here to make non_zero happy!!
-        #squeezed_class_id = ng.constant([0,1,0,1], dtype=np.int32, name='squeezed_class_id')
+        notequal_background = ng.constant(np.array([0., 1., 0., 1.]), dtype=np.int32)          
+        nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero')  
+       
 
-        #return [squeezed_class_id, bbox_id, const_values[1]] #CHEKER
-        if background == 0:
-            nonzero = ng.non_zero(squeezed_class_id) #(4,)
-        else:
-            thresh = ng.constant([-1], dtype=np.int32) #(1,) int32 # FIXME: int32 to int32?
-            cast = ng.convert(squeezed_class_id, destination_type=np.int32) #6 #(4,) int32
-            greater = ng.greater(cast, thresh, auto_broadcast='NUMPY', name='greater_background') #(4,) float32
-
-            # FIXME
-            # OV Opset doc shows greater returns Bool. But actually it returns float32
-            # so I HAVE TO convert to bool here. Failed! It looks openvino uses float32 to represent bool??
-            #greater = ng.convert(greater, destination_type=np.int32, name='greater')
-            #$greater = ng.constant([1], dtype=np.int32)
-            #return [cast, greater, thresh] #CHEKER pass, except greater dtype not bool
-
-            # FIXME: have to hardcode here to make non_zero happy!!
-            greater = ng.constant([1,1,1,1], dtype=np.int32)      
-            nonzero = ng.non_zero(greater, output_type="i64", name='nonzero') #output i64?
-        
-        #return [squeezed_class_id, bbox_id, nonzero] #CHEKER pass with hardcode
         #squeezed_class_id (4,) int32; gather_bbox_id (4, 1) int32; nonzero (1, 4) int32 
 
         #non-background's
@@ -187,7 +163,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
         # select topk scores indices
         #print("np.array(4) @@@@@@@@@@@@", np.array([4]).shape, np.array([4]).reshape(-1).shape)
-        keep_top_k = ng.constant(np.array(4), dtype=np.int64)
+        keep_top_k = ng.constant(np.array(2), dtype=np.int64)
         #return [keep_top_k, cast_concat_topK_select_num, gather_scores]
         #Constant_51 (1,) int32 array([4]
         #TODO: K must be positive, must be a scaler
@@ -321,6 +297,10 @@ def onnx_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
     from onnx import helper, shape_inference
     from onnx import TensorProto
 
+    # debug         
+    print('\033[94m' + "@@#############################debugging {}".format(int(TensorProto.INT32))+ '\033[0m')       
+    print('\033[94m' + "@@#############################debugging {}".format(np.array([False]).astype(np.bool).dtype)+ '\033[0m')          
+
     # The protobuf definition can be found here:
     # https://github.com/onnx/onnx/blob/master/onnx/onnx.proto
 
@@ -423,7 +403,7 @@ if __name__ == "__main__":
     sample_scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
                             [0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
     score_threshold = 0.0
-    background = -1
+    background = 0
     iou_threshold = 0.5
     max_output_boxes_per_class = 2
 

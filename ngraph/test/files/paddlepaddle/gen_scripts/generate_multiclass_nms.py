@@ -119,7 +119,7 @@ def print_2Dlike(data, filename):
         print(data.shape, file=f)
         _data = data.copy()
         if len(_data.shape)==1:
-            _data = np.expand_dims(_data, axis=0)
+            _data = np.expand_dims(_data, axis=1)
         assert len(_data.shape)==2
         print(_data.shape, file=f)
         
@@ -188,16 +188,16 @@ def main():
         exps = np.exp(shiftx)
         return exps / np.sum(exps)
 
-    '''
     # case 2
-    N = 1  #onnx multiclass_nms only supports input[batch_size] == 1.
+    '''
+    N = 7  #onnx multiclass_nms only supports input[batch_size] == 1.
     M = 1200
     C = 21
     BOX_SIZE = 4
-    background = -1
+    background = 0
     nms_threshold = 0.3
     nms_top_k = 400  #max_output_boxes_per_class
-    keep_top_k = -1
+    keep_top_k = 10
     score_threshold = 0.02
 
     scores = np.random.random((N * M, C)).astype('float32')
@@ -211,6 +211,7 @@ def main():
     boxes[:, :, 2:4] = boxes[:, :, 2:4] * 0.5 + 0.5
 
     pdpd_attrs = {
+        'nms_type': 'multiclass_nms3', #PDPD Op type
         'background_label': background,
         'score_threshold': score_threshold,
         'nms_top_k': nms_top_k,
@@ -220,6 +221,7 @@ def main():
         'nms_eta': 1.0
     }
     '''
+
 
     '''
     M = 1200
@@ -238,6 +240,9 @@ def main():
     scores_data = fluid.data(
         name='scores', shape=[N, C, M], dtype='float32') 
     ''' 
+
+
+    # case PASS
     boxes = np.array([[
         [0.0, 0.0, 1.0, 1.0],
         [0.0, 0.1, 1.0, 1.1],
@@ -249,7 +254,7 @@ def main():
     scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
                             [0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
     score_threshold = 0.0
-    background = -1
+    background = 0
     iou_threshold = 0.5
     max_output_boxes_per_class = 2
 
@@ -262,7 +267,8 @@ def main():
         'keep_top_k': -1,  #keep all
         'normalized': False,
         'nms_eta': 1.0
-    }       
+    } 
+     
 
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)  
@@ -278,7 +284,7 @@ def main():
 
     # step 2. generate onnx model
     # !paddle2onnx --model_dir=../models/yolo_box_test1/ --save_file=../models/yolo_box_test1/yolo_box_test1.onnx --opset_version=10
-    import subprocess
+    #import subprocess
     #subprocess.run(["paddle2onnx", "--model_dir=../models/multiclass_nms_test1/", "--save_file=../models/multiclass_nms_test1/multiclass_nms_test1.onnx", "--opset_version=11", "--enable_onnx_checker=True"])
     #pred_onx = onnx_run(data_bboxes, data_scores)
 
