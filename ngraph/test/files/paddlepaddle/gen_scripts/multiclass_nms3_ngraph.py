@@ -60,9 +60,8 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
     #keep_topK
     def keep_top_k(select_bbox_indices, select_scores, valid_outputs, scores, bboxes, pdpd_attrs, is_lod_input=False):
-        outputs = [None, None, None] #store outputs of this graph
+        outputs = [None, None, None] # store outputs of this graph
 
-        # step 1 nodes select the nms class
         # create some const value to use
         background = pdpd_attrs['background_label']
         const_values = []
@@ -70,73 +69,29 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
             const_value = ng.constant([value], name='const_'+str(value), dtype=np.int64)                
             const_values.append(const_value)
 
-        # In this code block, we will deocde the raw score data, reshape N * C * M to 1 * N*C*M
-        # and the same time, decode the select indices to 1 * D, gather the select_indices
         class_id = ng.gather(select_bbox_indices, indices=const_values[1], axis=const_values[1], name='gather_class_id')
         squeezed_class_id = ng.squeeze(class_id, axes=const_values[1], name='squeezed_class_id')
         bbox_id = ng.gather(select_bbox_indices, indices=const_values[2], axis=const_values[1], name='gather_bbox_id')
 
-        #return [class_id, squeezed_class_id, bbox_id] #CHEKER pass
-        #(4,1) (4,) (4,1) @int32
-                        
+        # Phase 1: remove background class     
         node_background = ng.constant(np.array([background]), dtype=np.int32, name='node_background')
         notequal_background = ng.not_equal(squeezed_class_id, node_background, name='notequal_background')
-        #return [class_id, squeezed_class_id, notequal_background] #CHEKER pass
-        # FIXME: have to hardcode here to make non_zero happy!!
+        # TODO: have to hardcode here to make non_zero happy!!
         notequal_background = ng.constant(np.array([0., 1., 0., 1.]), dtype=np.int32)          
         nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero')    
-        #squeezed_class_id (4,) int32; gather_bbox_id (4, 1) int32; nonzero (1, 4) int32 
 
-        #non-background's
-        class_id = ng.gather(class_id, indices=nonzero, axis=const_values[0], name='non-bg-class_id') #class_id:shape (4,1) -> (1,4,1)
+        # non-background's
+        class_id = ng.gather(class_id, indices=nonzero, axis=const_values[0], name='non-bg-class_id') # class_id:shape (4,1) -> (1,4,1)
         bbox_id = ng.gather(bbox_id, indices=nonzero, axis=const_values[0], name='nong-bg-bbox_id')
-        #return [class_id, bbox_id, nonzero] #CHEKER
-        # (1,4,1) int32, (1,4,1) int32, (1,4) int32
 
-        if 1:
-            select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nong-bg-select_scores') # dim increase
-            #return [class_id, bbox_id, select_scores] #CHEKER
-            #nong-bg-select_scores (1, 2, 3) float32; nong-bg-bbox_id (1, 2, 1) int32; non-bg-class_id (1, 2, 1) int32
+        select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nong-bg-select_scores') # dim increase
+        gather_scores = ng.gather(select_scores, indices=const_values[2], axis=const_values[2], name='gather_scores') #axis=0 true scores
 
-            gather_scores = ng.gather(select_scores, indices=const_values[2], axis=const_values[2], name='gather_scores') #axis=0 true scores
-            #return [gather_scores, select_scores, class_id]
+        # Squeeze the indices to 1 dim
+        squeeze_axes = ng.constant([0 ,2], dtype=np.int64, name='squeeze_axes')            
+        gather_scores = ng.squeeze(gather_scores, axes=squeeze_axes, name='squeeze_gather_scores') #(1,2,1) -> (2,)
 
-            # Squeeze the indices to 1 dim
-            squeeze_axes = ng.constant([0 ,2], dtype=np.int64, name='squeeze_axes')            
-            gather_scores = ng.squeeze(gather_scores, axes=squeeze_axes, name='squeeze_gather_scores') #(1,2,1) -> (2,)
-        else:
-            # get the shape of scores
-            shape_scores = ng.shape_of(scores, output_type='i32', name='shape_scores') #output i32
-
-            # gather the index: 2 shape of scores
-            class_num = ng.gather(shape_scores, const_values[2], const_values[0], name='class_num-M') #axis=0 #Question: not C, but M
-
-            # reshape scores N * C * M to (N*C*M) * 1
-            reshape_scores = ng.reshape(scores, const_values[-1], special_zero=True, name='reshape_scores')
-
-            #return [shape_scores, class_num, reshape_scores] #CHEKER pass
-            #shape_scores (3,) int32 ; reshape_scores (12,) float32 ; class_num-M (1,) int32, value=6, i.e.M
-
-            # mul class * M
-            mul_classnum_boxnum = ng.multiply(class_id, class_num, name='mul_classnum_boxnum') #Question: what's shape?
-
-            # add class * M * index
-            add_class_indices = ng.add(mul_classnum_boxnum, bbox_id, name='add_class_indices')        
-
-            #return [add_class_indices, bbox_id, mul_classnum_boxnum] #CHEKER PASS
-            #nong-bg-bbox_id (1, 4, 1) int32; mul_classnum_boxnum (1, 4, 1) int32; add_class_indices (1, 4, 1) int32
-
-            # Squeeze the indices to 1 dim
-            squeeze_axes = ng.constant([0 ,2], dtype=np.int64, name='squeeze_axes')
-            score_indices = ng.squeeze(add_class_indices, squeeze_axes, name='score_indices')
-
-            # gather the data from flatten scores
-            gather_scores = ng.gather(reshape_scores, score_indices, axis=const_values[0], name='gather_scores') #axis=0 true scores
-            #return [gather_scores, reshape_scores, score_indices]
-            #reshape_scores (12,) float32; score_indices (4,) int32; gather_scores (4,) float32
-
-        # topK
-        #print(np.array([10]).reshape(1,1).shape)
+        # Phase 2: topK 
         keep_top_k = pdpd_attrs['keep_top_k']
         if keep_top_k == -1:
             keep_top_k = 100000    #TODO: K must be positive, must be a scaler     
@@ -147,44 +102,23 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
         gather_select_num = ng.gather(shape_select_num, const_values[0], axis=0, name='gather_select_num')
 
-        #return [keep_top_k, shape_select_num, gather_select_num]
-        #keep_top_k (1, 1) int32; shape_select_num (1,) int32; gather_select_num (1,) int32
-
         unsqueeze_select_num = ng.unsqueeze(gather_select_num, axes=[0], name='unsqueeze_select_num')
 
         concat_topK_select_num = ng.concat([unsqueeze_select_num, keep_top_k], axis=0, name='concat_topK_select_num')
 
         cast_concat_topK_select_num = ng.convert(concat_topK_select_num, destination_type=np.int32, name='cast_concat_topK_select_num') #6
-        #return [unsqueeze_select_num, concat_topK_select_num, cast_concat_topK_select_num]
-        #unsqueeze_select_num (1, 1) int32; concat_topK_select_num (2, 1) int32; cast_concat_topK_select_num (2, 1) int32; 
 
         keep_top_k = ng.reduce_min(cast_concat_topK_select_num, reduction_axes=[0], keep_dims=False, name='reduce_min/keep_top_k')
-        #return [keep_top_k, cast_concat_topK_select_num, gather_scores]
-        #reduce_min/keep_top_k (1,) int32 array([-1])
-        # unsqueeze the indices to 1D tensor
-        #keep_top_k = ng.unsqueeze(keep_top_k, axes=[0], name='unsqueeze/keep_top_k')
-        #return [keep_top_k, cast_concat_topK_select_num, gather_scores]
-        #Unsqueeze_51 (1, 1) int32 array([[-1]])
         # cast the indices to INT64
         keep_top_k = ng.convert(keep_top_k, destination_type=np.int64, name='keep_top_k') #7   TODO: no need, as topK can accept i32.     
-        #return [keep_top_k, cast_concat_topK_select_num, gather_scores]
-        # keep_top_k (1,) int32 array([4]
 
         # select topk scores indices
-        #print("np.array(4) @@@@@@@@@@@@", np.array([4]).shape, np.array([4]).reshape(-1).shape)
-        #keep_top_k = ng.constant(np.array(2), dtype=np.int64)
-        #return [keep_top_k, cast_concat_topK_select_num, gather_scores]
-        #Constant_51 (1,) int32 array([4]
-        keep_top_k = ng.squeeze(keep_top_k, axes=const_values[0])
-        #TODO: K must be positive, must be a scaler
+        keep_top_k = ng.squeeze(keep_top_k, axes=const_values[0]) # K must be positive, must be a scaler        
         node_topk = ng.topk(gather_scores, keep_top_k, axis=0, mode='max', sort='value', index_element_type='i64', name='topK')
         keep_topk_scores, keep_topk_indices = node_topk.outputs()
 
-        #return [keep_top_k, cast_concat_topK_select_num, gather_scores] #pass with keep_top_k constant
-
         # gather topk label, scores, boxes
         gather_topk_scores = ng.gather(gather_scores, indices=keep_topk_indices, axis=const_values[0], name='topk_scores') #axis=0
-
         gather_topk_class = ng.gather(class_id, indices=keep_topk_indices, axis=const_values[1], name='topk_label') #axis=1
 
         # gather the boxes need to gather the boxes id, then get boxes
@@ -211,29 +145,13 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
         sort_by_score_results = ng.concat(inputs_concat_final_results, axis=2, name='sort_by_score_results')
 
-        #return [cast_topk_class, unsqueeze_topk_scores, gather_select_boxes]
-        #cast_topk_class (1, 4, 1) float32 ; unsqueeze_topk_scores (1, 4, 1) float32 ; gather_select_boxes (1, 4, 4) float32
-
-        # sort by class_id
+        # Phase 3: sort by class_id
         squeeze_cast_topk_class = ng.squeeze(cast_topk_class, axes=const_axes_1dim) #axes=[0, 2]
 
-        '''
-        neg_squeeze_cast_topk_class = ng.negative(squeeze_cast_topk_class)
-        node_topk = ng.topk(neg_squeeze_cast_topk_class, keep_top_k, axis=0, mode='max', sort='value') #TODO: min
-        data, indices = node_topk.outputs()
-        '''
-
         node_topk = ng.topk(squeeze_cast_topk_class, keep_top_k, axis=0, mode='min', sort='value') #TODO: min
-        data, indices = node_topk.outputs()
-
-        #return [squeeze_cast_topk_class, data, indices]
-        # TopK_73.0 (4,) float32  ; TopK_73.1 (4,) int32 ;            
+        data, indices = node_topk.outputs()       
 
         concat_final_results = ng.gather(sort_by_score_results, indices, axis=const_values[1], name='concat_final_results') #axis=1
-
-        
-        #return [concat_final_results, sort_by_score_results, indices]
-        #concat_final_results (1, 4, 6) float32 ; sort_by_score_results (1, 4, 6) float32 ; TopK_74.1 (4,) int32
 
         # output node['Out']
         outputs[0] = ng.squeeze(concat_final_results, axes=const_values[0], name='Out') #axes=[0]
@@ -242,8 +160,6 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         if nms_type in ['multiclass_nms2', 'matrix_nms', 'multiclass_nms3']:
             # output node['Index']
             final_indices = ng.gather(bbox_id, indices, axis=const_values[1], name='final_indices') #axis=1
-            #return [indices, bbox_id, final_indices]
-            #nong-bg-bbox_id (1, 4, 1) int32, final_indices (1, 4, 1) int32, TopK_73.1 (4,) int32
             final_indices = ng.squeeze(final_indices, axes=const_values[0], name='Index') #axes=[0]
 
             outputs[1] = final_indices
