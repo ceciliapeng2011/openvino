@@ -93,13 +93,17 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         #return [class_id, bbox_id, nonzero] #CHEKER
         # (1,4,1) int32, (1,4,1) int32, (1,4) int32
 
-        if 0:
+        if 1:
             select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nong-bg-select_scores') # dim increase
             #return [class_id, bbox_id, select_scores] #CHEKER
             #nong-bg-select_scores (1, 2, 3) float32; nong-bg-bbox_id (1, 2, 1) int32; non-bg-class_id (1, 2, 1) int32
 
-            gather_scores = ng.gather(select_scores, indices=const_values[2], axis=const_values[1], name='gather_scores') #axis=0 true scores
-            return [gather_scores, select_scores, class_id]
+            gather_scores = ng.gather(select_scores, indices=const_values[2], axis=const_values[2], name='gather_scores') #axis=0 true scores
+            #return [gather_scores, select_scores, class_id]
+
+            # Squeeze the indices to 1 dim
+            squeeze_axes = ng.constant([0 ,2], dtype=np.int64, name='squeeze_axes')            
+            gather_scores = ng.squeeze(gather_scores, axes=squeeze_axes, name='squeeze_gather_scores') #(1,2,1) -> (2,)
         else:
             # get the shape of scores
             shape_scores = ng.shape_of(scores, output_type='i32', name='shape_scores') #output i32
