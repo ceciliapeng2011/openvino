@@ -6,7 +6,7 @@ from __future__ import unicode_literals
 import numpy as np
 import os
 
-def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
+def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=None):
     from openvino.inference_engine import IECore
     import ngraph as ng
     from ngraph import opset7
@@ -53,6 +53,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
                                                 iou_threshold=node_iou_threshold,
                                                 output_type='i32',
                                                 score_threshold=node_score_threshold,
+                                                sort_result_descending=False, #onnx: sort_result_descending=false
                                                 name='non_max_suppression')
         
         if class_id is not None and class_id != 0:
@@ -64,7 +65,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
     # select_bbox_indices: shape [num_selected_boxes, 3], num_selected_boxes = min(M, max_ouput_boxes_per_class) * N * C
     # max_ouput_boxes_per_class equals nms_top_k in pdpd_attrs.
     # select_scores: shape [num_selected_boxes, 3]
-    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, scores, bboxes, pdpd_attrs, is_lod_input=False):
+    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, scores, bboxes, pdpd_attrs, is_lod_input=False, hack_nonzero=None):
         outputs = [None, None, None] # store outputs of this graph
 
         # preapre: create some const value to use        
@@ -92,21 +93,10 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
 
         node_background = ng.constant(np.array([background]), dtype=np.int32, name='node_background')
         notequal_background = ng.not_equal(squeezed_class_id, node_background, name='notequal_background')
-        #return [notequal_background, class_id, squeezed_class_id]
+        return [notequal_background, class_id, squeezed_class_id]
         # TODO: have to hardcode here to make non_zero happy!!
-        #const_nonbg=np.array([0., 1., 0., 1.])
-        #nonbg=[1]*8400
-        #nonbg[13]=0
-        nonbg=[1]*58800
-        nonbg[50]=0
-        nonbg[61]=0
-        nonbg[68]=0
-        nonbg[78]=0
-        nonbg[89]=0
-        nonbg[99]=0
-        nonbg[138]=0
-        const_nonbg=np.array(nonbg)
-        notequal_background = ng.constant(const_nonbg, dtype=np.int32)          
+        if hack_nonzero is not None:
+            notequal_background = ng.constant(hack_nonzero, dtype=np.int32)          
         nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero')  # shape (1, S1), S1=num_selected_boxes-num_background_bbox
 
         # non-background's
@@ -127,7 +117,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         if keep_top_k == -1:
             keep_top_k = 100000
         keep_top_k = ng.constant(np.array([keep_top_k]))
-        
+
         shape_select_num = ng.shape_of(gather_scores, name='shape_select_num') # shape (S1)
         gather_select_num = ng.gather(shape_select_num, const_values[0], axis=0, name='gather_select_num') # shape (1,)
         
@@ -136,7 +126,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         # select topk scores indices        
         node_topk = ng.topk(gather_scores, keep_top_k, axis=0, mode='max', sort='value', index_element_type='i64', name='topK') # K must be positive, must be a scaler
         keep_topk_scores, keep_topk_indices = node_topk.outputs()
-        return [keep_top_k, gather_scores, keep_topk_scores]
+        #return [keep_top_k, gather_scores, keep_topk_scores]
 
         # gather topk label, scores, boxes
         gather_topk_scores = ng.gather(gather_scores, indices=keep_topk_indices, axis=const_values[0], name='topk_scores')
@@ -164,7 +154,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
             cast_topk_class, unsqueeze_topk_scores, gather_select_boxes
         ]
 
-        return [cast_topk_class, unsqueeze_topk_scores, gather_select_boxes]
+        #return [cast_topk_class, unsqueeze_topk_scores, gather_select_boxes]
         #cast_topk_class (1, 10, 1) float32
         #unsqueeze_topk_scores (1, 10, 1) float32
         #gather_select_boxes (7, 10, 4) float32
@@ -211,8 +201,8 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs):
         print('\033[91m' + "{} not implemented yet! ".format('lod tensor inputs') + '\033[0m')
     else:
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
-        #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs)    
+        graph = [select_bbox_indices, select_scores, valid_outputs]
+        #graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)    
 
     assert isinstance(graph, list)
     print('\033[94m' + "executable_network graph {} {}".format(type(graph), graph[0]) + '\033[0m')

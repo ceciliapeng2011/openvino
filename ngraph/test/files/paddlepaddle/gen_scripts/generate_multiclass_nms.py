@@ -120,7 +120,8 @@ def print_2Dlike(data, filename):
         _data = data.copy()
         if len(_data.shape)==1:
             _data = np.expand_dims(_data, axis=1)
-        assert len(_data.shape)==2
+        if len(_data.shape)>2:
+            _data = _data.reshape((_data.shape[0],-1))
         print(_data.shape, file=f)
         
         print("\n[", file=f)
@@ -155,31 +156,131 @@ def validate(pred_ref: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
                 print('\033[92m' + "PDPD and IE results are identical at {} ".format(idx) + '\033[0m') 
             idx += 1          
 
-def main():
-    # multiclass_nms
+def main(): # multiclass_nms 
+    random_testcase = [None] * 10 
+    test_case = [None] * 10
 
-    '''
-    # case1
-    boxes = np.array([[
-        [0.0, 0.0, 1.0, 1.0],
-        [0.0, 0.1, 1.0, 1.1],
-        [0.0, -0.1, 1.0, 0.9],
-        [0.0, 10.0, 1.0, 11.0],
-        [0.0, 10.1, 1.0, 11.1],
-        [0.0, 100.0, 1.0, 101.0]
-    ]]).astype(np.float32)
-    scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
+    # case PASS
+    test_case[0] = {# N 1, C 1
+        'boxes' : np.array([[
+            [0.0, 0.0, 1.0, 1.0],
+            [0.0, 0.1, 1.0, 1.1],
+            [0.0, -0.1, 1.0, 0.9],
+            [0.0, 10.0, 1.0, 11.0],
+            [0.0, 10.1, 1.0, 11.1],
+            [0.0, 100.0, 1.0, 101.0]
+        ]]).astype(np.float32),
 
-    pdpd_attrs = {
-        'background_label': -1,
-        'score_threshold': 0.4,
-        'nms_top_k': 200,
-        'nms_threshold': 0.5,
-        'keep_top_k': 200,
-        'normalized': False,
-        'nms_eta': 1.0
+        'scores' : np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32),
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': -1,
+            'score_threshold': 0.4,
+            'nms_top_k': 200,
+            'nms_threshold': 0.5,
+            'keep_top_k': 200,
+            'normalized': False,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : np.array([1., 1., 0., 0., 0., 0.])
+
     }
-    '''
+
+    # case PASS
+    test_case[1] = { # N 1, C 2
+        'boxes' : np.array([[
+            [0.0, 0.0, 1.0, 1.0],
+            [0.0, 0.1, 1.0, 1.1],
+            [0.0, -0.1, 1.0, 0.9],
+            [0.0, 10.0, 1.0, 11.0],
+            [0.0, 10.1, 1.0, 11.1],
+            [0.0, 100.0, 1.0, 101.0]
+        ]]).astype(np.float32),
+
+        'scores' : np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
+                            [0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32),
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': 0,
+            'score_threshold': 0.0,
+            'nms_top_k': 2,
+            'nms_threshold': 0.5,
+            'keep_top_k': -1,  #keep all
+            'normalized': False,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : np.array([0., 1., 0., 1.])
+    }   
+
+    test_case[2] = { # N 2, C 1
+        'boxes' : np.array([[[0.0, 0.0, 1.0, 1.0],
+                           [0.0, 0.1, 1.0, 1.1],
+                           [0.0, -0.1, 1.0, 0.9],
+                           [0.0, 10.0, 1.0, 11.0],
+                           [0.0, 10.1, 1.0, 11.1],
+                           [0.0, 100.0, 1.0, 101.0]],
+                          [[0.0, 0.0, 1.0, 1.0],
+                           [0.0, 0.1, 1.0, 1.1],
+                           [0.0, -0.1, 1.0, 0.9],
+                           [0.0, 10.0, 1.0, 11.0],
+                           [0.0, 10.1, 1.0, 11.1],
+                           [0.0, 100.0, 1.0, 101.0]]]).astype(np.float32),
+
+        'scores' : np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]],
+                           [[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32),
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': 0,
+            'score_threshold': 0.0,
+            'nms_top_k': 2,
+            'nms_threshold': 0.5,
+            'keep_top_k': -1,  #keep all
+            'normalized': False,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : np.array([0., 0., 0., 0.])
+    } 
+
+    test_case[3] = { # N 2, C 5, M 3
+        'boxes' : np.array([[[0.5,  0.06, 0.79, 0.76],
+                            [0.34, 0.13, 0.52, 0.96],
+                            [0.05, 0.35, 0.95, 0.96]],
+                            [[0.21, 0.01, 0.85, 0.95],
+                            [0.4,  0.09, 0.51, 0.84],
+                            [0.37, 0.14, 0.61, 0.95]]]).astype(np.float32),
+
+        'scores' : np.array([
+                            [[0.12, 0.12, 0.45],
+                            [0.54, 0.14, 0.29],
+                            [0.22, 0.22, 0.16],
+                            [0.18, 0.13, 0.12],
+                            [0.2,  0.4, 0.22]],
+                            [[0.12, 0.2, 0.10],
+                            [0.91, 0.99,  0.95],
+                            [0.99, 0.99, 0.96],
+                            [0.95, 0.90, 0.91],
+                            [0.93, 0.95, 0.87]]                           
+                            ]).astype(np.float32),                       
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': -1,
+            'score_threshold': 0.0,
+            'nms_top_k': -1,
+            'nms_threshold': 10000.0,
+            'keep_top_k': -1,  #keep all
+            'normalized': False,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : np.array([1., 1., 1., 1., 0., 1., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])
+    }              
 
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
@@ -188,99 +289,90 @@ def main():
         exps = np.exp(shiftx)
         return exps / np.sum(exps)
 
-    # case 2
-    '''
-    N = 7  #onnx multiclass_nms only supports input[batch_size] == 1.
-    M = 1200
-    C = 21
-    BOX_SIZE = 4
-    background = 0
-    nms_threshold = 0.3
-    nms_top_k = 400  #max_output_boxes_per_class
-    keep_top_k = 10
-    score_threshold = 0.02
+    def random_test (_N=1, _M=1200, _C=21, nonzero=None):
+        N = _N  #onnx multiclass_nms only supports input[batch_size] == 1.
+        M = _M
+        C = _C
+        BOX_SIZE = 4
+        background = 0
+        nms_threshold = 0.3
+        nms_top_k = 400  #max_output_boxes_per_class
+        keep_top_k = 10
+        score_threshold = 0.02
 
-    scores = np.random.random((N * M, C)).astype('float32')
+        scores = np.random.random((N * M, C)).astype('float32')
 
-    scores = np.apply_along_axis(softmax, 1, scores)
-    scores = np.reshape(scores, (N, M, C))
-    scores = np.transpose(scores, (0, 2, 1))
+        scores = np.apply_along_axis(softmax, 1, scores)
+        scores = np.reshape(scores, (N, M, C))
+        scores = np.transpose(scores, (0, 2, 1))
 
-    boxes = np.random.random((N, M, BOX_SIZE)).astype('float32')
-    boxes[:, :, 0:2] = boxes[:, :, 0:2] * 0.5
-    boxes[:, :, 2:4] = boxes[:, :, 2:4] * 0.5 + 0.5
+        boxes = np.random.random((N, M, BOX_SIZE)).astype('float32')
+        boxes[:, :, 0:2] = boxes[:, :, 0:2] * 0.5
+        boxes[:, :, 2:4] = boxes[:, :, 2:4] * 0.5 + 0.5
 
-    pdpd_attrs = {
-        'nms_type': 'multiclass_nms3', #PDPD Op type
-        'background_label': background,
-        'score_threshold': score_threshold,
-        'nms_top_k': nms_top_k,
-        'nms_threshold': nms_threshold,
-        'keep_top_k': keep_top_k,
-        'normalized': False,
-        'nms_eta': 1.0
-    }
-    '''
+        pdpd_attrs = {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': background,
+            'score_threshold': score_threshold,
+            'nms_top_k': nms_top_k,
+            'nms_threshold': nms_threshold,
+            'keep_top_k': keep_top_k,
+            'normalized': False,
+            'nms_eta': 1.0
+        }
 
+        return {'scores':scores, 'boxes':boxes, 'pdpd_attrs': pdpd_attrs, 'hack_nonzero': nonzero}
 
-    '''
-    M = 1200
-    N = 7
-    C = 21
-    BOX_SIZE = 4
+    nonzero = [1]*8400
+    nonzero[13]=0
+    random_testcase[0] = random_test(1, 1200, 21, nonzero) # N 1, C 21, random
 
-    boxes_np = np.random.random((M, C, BOX_SIZE)).astype('float32')
-    scores = np.random.random((N * M, C)).astype('float32')
-    scores = np.apply_along_axis(softmax, 1, scores)
-    scores = np.reshape(scores, (N, M, C))
-    scores_np = np.transpose(scores, (0, 2, 1))
+    nonzero=[1]*58800
+    nonzero[50]=0
+    nonzero[61]=0
+    nonzero[68]=0
+    nonzero[78]=0
+    nonzero[89]=0
+    nonzero[99]=0
+    nonzero[138]=0
+    random_testcase[1] = random_test(2, 1200, 21, nonzero)  # N 7, C 1, random
 
-    boxes_data = fluid.data(
-        name='bboxes', shape=[M, C, BOX_SIZE], dtype='float32')
-    scores_data = fluid.data(
-        name='scores', shape=[N, C, M], dtype='float32') 
-    ''' 
-
-
-    # case PASS
-    boxes = np.array([[
-        [0.0, 0.0, 1.0, 1.0],
-        [0.0, 0.1, 1.0, 1.1],
-        [0.0, -0.1, 1.0, 0.9],
-        [0.0, 10.0, 1.0, 11.0],
-        [0.0, 10.1, 1.0, 11.1],
-        [0.0, 100.0, 1.0, 101.0]
-    ]]).astype(np.float32)
-    scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
-                            [0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
-    score_threshold = 0.0
-    background = 0
-    iou_threshold = 0.5
-    max_output_boxes_per_class = 2
-
-    pdpd_attrs = {
-        'nms_type': 'multiclass_nms3', #PDPD Op type
-        'background_label': background,
-        'score_threshold': score_threshold,
-        'nms_top_k': max_output_boxes_per_class,
-        'nms_threshold': iou_threshold,
-        'keep_top_k': -1,  #keep all
-        'normalized': False,
-        'nms_eta': 1.0
-    } 
-     
+    nonzero=[1]*8400*2
+    nonzero[50]=0
+    nonzero[61]=0
+    nonzero[68]=0
+    nonzero[78]=0
+    nonzero[89]=0
+    nonzero[99]=0
+    nonzero[138]=0
+    random_testcase[2] = random_test(7, 1200, 21, nonzero)  # N 7, C 1, random    
+    
+    random_testcase[3] = random_test(2, 3, 5)  # N 2, M 3, C 5 
 
     # bboxes shape (N, M, 4) 
-    # scores shape (N, C, M)  
-    data_bboxes = boxes
-    data_scores = scores 
+    # scores shape (N, C, M)
+    if 1:
+        T = 3
+        data_bboxes = test_case[T]['boxes']
+        data_scores = test_case[T]['scores']
+        pdpd_attrs = test_case[T]['pdpd_attrs']
+        hack_nonzero = test_case[T]['hack_nonzero']
+    else:
+        T = 3
+        data_bboxes = random_testcase[T]['boxes']
+        data_scores = random_testcase[T]['scores']
+        pdpd_attrs = random_testcase[T]['pdpd_attrs']
+        hack_nonzero = random_testcase[T]['hack_nonzero'] 
+        np.set_printoptions(precision=2)
+        np.set_printoptions(suppress=True)  
+        print("bboxes: {}, \n scores: {}".format(data_bboxes, data_scores))          
 
     # For any change to pdpd_attrs, do -
     # step 1. generate paddle model
     pred_pdpd = multiclass_nms('multiclass_nms_test1', data_bboxes, data_scores, pdpd_attrs)
 
     from multiclass_nms3_ngraph import ngraph_multiclass_nms3
-    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, pdpd_attrs)
+    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, pdpd_attrs, hack_nonzero)
 
     # step 2. generate onnx model
     # !paddle2onnx --model_dir=../models/yolo_box_test1/ --save_file=../models/yolo_box_test1/yolo_box_test1.onnx --opset_version=10
@@ -293,7 +385,7 @@ def main():
 
     # step 4. compare 
     # Try different tolerence
-    validate(pred_pdpd, pred_ngraph)
+    #validate(pred_pdpd, pred_ngraph)
     #validate(pred_pdpd, [], pred_ie, rtol=1e-4, atol=1e-5) 
 
 
