@@ -96,8 +96,9 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             node_background = ng.constant(np.array([background]), dtype=np.float, name='node_background')
             notequal_background = ng.not_equal(select_class_id, node_background, name='notequal_background')
 
-            notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
-            hack_nonzero_idx += 1   
+            if hack_nonzero is not None:
+                notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
+                hack_nonzero_idx += 1   
             nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero_background')  # shape (1, S1) #Unsupported dynamic ops            
 
             # non-background's
@@ -129,8 +130,9 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
             #return [select_scores, image_id, equal_imageid]
             
-            equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
-            hack_nonzero_idx += 1
+            if hack_nonzero is not None:
+                equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
+                hack_nonzero_idx += 1
             nonzero_imageid = ng.non_zero(equal_imageid, output_type="i32", name='nonzero_imageid')  # shape (1, S2) #Unsupported dynamic ops
 
             cur_select_bbox_indices = ng.gather(select_bbox_indices, indices=nonzero_imageid, axis=const_values[0]) # shape (1, S2, 3)
@@ -172,8 +174,8 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
             topk_box_id = ng.gather(topk_bboxes_indices, indices=const_values[2], axis=const_values[1], name='gather_box_id') # shape (S3, 1)
             topk_box_id = ng.convert(topk_box_id, destination_type=np.float, name='topk_box_id') 
-            if hack_nonzero_idx > 2:
-                return [topk_box_id, topk_bboxes_indices, cur_select_bbox_indices]                         
+            if hack_nonzero_idx > 2: ###TODO DEBUG NEXT MONDAY
+                return [topk_indices, topk_bboxes_indices, cur_select_bbox_indices]                         
 
             const_02 = ng.constant([0,2], dtype=np.int64)
             gather_bbox_indices = ng.gather(topk_bboxes_indices, indices=const_02, axis=1, name='gather_bbox_indices') # shape (S3, 2) containing triplets (batch_index, box_index)            
