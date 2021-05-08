@@ -138,7 +138,7 @@ def validate(pred_ref: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
     checker(pred_ie, "openvino")
 
     if isinstance(pred_ie, list) and isinstance(pred_ref, list):
-        comp1 = np.all(np.isclose(pred_pdpd, pred_onx, rtol=rtol, atol=atol, equal_nan=True))
+        comp1 = np.all(np.isclose(pred_ref, pred_ie, rtol=rtol, atol=atol, equal_nan=True))
         if not comp1: 
             print('\033[91m' + "PDPD and ONNX results are different "+ '\033[0m')
         else:
@@ -282,8 +282,9 @@ def main(): # multiclass_nms
         },
 
         'hack_nonzero' : [
-            np.array([0., 1., 1., 1., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,1., 1., 1.]),
-            np.array([0., 0., 0., 1., 1., 1., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+            np.array([0., 1., 1., 1., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,1., 1., 1.]), #elimiate background
+            np.array([0., 0., 0., 1., 1., 1., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]), #image 0
+            np.array([1., 1., 1., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) #image 1
         ]
     }              
 
@@ -391,7 +392,7 @@ def main(): # multiclass_nms
     # step 4. compare 
     # Try different tolerence
     #validate(pred_pdpd, pred_ngraph)
-    #validate(pred_pdpd, [], pred_ie, rtol=1e-4, atol=1e-5) 
+    #validate(pred_pdpd, pred_ngraph, rtol=1e-4, atol=1e-5) 
 
 
 if __name__ == "__main__":
