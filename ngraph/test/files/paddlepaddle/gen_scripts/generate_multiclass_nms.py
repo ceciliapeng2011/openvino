@@ -392,7 +392,7 @@ def main(): # multiclass_nms
     # step 4. compare 
     # Try different tolerence
     #validate(pred_pdpd, pred_ngraph)
-    #validate(pred_pdpd, pred_ngraph, rtol=1e-4, atol=1e-5) 
+    validate(pred_pdpd, pred_ngraph, rtol=1e-4, atol=1e-5) 
 
 
 if __name__ == "__main__":

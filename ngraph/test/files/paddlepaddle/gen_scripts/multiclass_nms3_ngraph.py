@@ -38,8 +38,9 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             node_nms = ng.non_max_suppression(node_bboxes, node_scores,
                                                 max_output_boxes_per_class=node_max_output_boxes_per_class,
                                                 iou_threshold=node_iou_threshold,
-                                                output_type='i32',
+                                                output_type='i32', #BUG? runtime error if i64.
                                                 score_threshold=node_score_threshold,
+                                                sort_result_descending=True,
                                                 name='non_max_suppression')
         elif not normalized:
             node_value_one = ng.constant([1.0], name='one', dtype=np.float32)
@@ -51,7 +52,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             node_nms = ng.non_max_suppression(node_new_bboxes, node_scores,
                                                 max_output_boxes_per_class=node_max_output_boxes_per_class,
                                                 iou_threshold=node_iou_threshold,
-                                                output_type='i32',
+                                                output_type='i64',
                                                 score_threshold=node_score_threshold,
                                                 sort_result_descending=True, #onnx: sort_result_descending=false
                                                 name='non_max_suppression')
@@ -117,6 +118,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             keep_top_k = 100000
 
         N = input_scores.shape[0]
+        M = input_scores.shape[2]
         for i in range(N):
             print("~~~~ loop start for image {}/{} ~~~~~".format(i, N))
 
@@ -172,10 +174,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             topk_class_id = ng.gather(topk_bboxes_indices, indices=const_values[1], axis=const_values[1], name='gather_class_id') # shape (S3, 1)
             topk_class_id = ng.convert(topk_class_id, destination_type=np.float, name='topk_class_id')
 
-            topk_box_id = ng.gather(topk_bboxes_indices, indices=const_values[2], axis=const_values[1], name='gather_box_id') # shape (S3, 1)
-            topk_box_id = ng.convert(topk_box_id, destination_type=np.float, name='topk_box_id') 
-            if hack_nonzero_idx > 2: ###TODO DEBUG NEXT MONDAY
-                return [topk_indices, topk_bboxes_indices, cur_select_bbox_indices]                         
+            topk_box_id = ng.gather(topk_bboxes_indices, indices=const_values[2], axis=const_values[1], name='gather_box_id') # shape (S3, 1)                    
 
             const_02 = ng.constant([0,2], dtype=np.int64)
             gather_bbox_indices = ng.gather(topk_bboxes_indices, indices=const_02, axis=1, name='gather_bbox_indices') # shape (S3, 2) containing triplets (batch_index, box_index)            
@@ -196,7 +195,15 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
             # output['Index']
             final_indices = ng.gather(topk_box_id, indices, axis=const_values[0], name='final_indices'+str(i)) # shape (S3, 1)
+            const_batch_idx = ng.constant([i], name='const_batch_idx')
+            const_M = ng.constant([M], name='const_M')
+            mul_stride = ng.multiply(const_batch_idx, const_M)
+            mul_stride = ng.convert(mul_stride, destination_type=np.int32)
+            final_indices = ng.add(final_indices, mul_stride, name='final_indices'+str(i))
             selected_indices.append(final_indices)        
+
+            #if hack_nonzero_idx > 2: ###TODO DEBUG NEXT MONDAY
+            #    return [const_batch_idx, mul_stride, final_indices] 
 
             # output['NmsRoisNum']
             select_bboxes_shape = ng.shape_of(final_indices)
