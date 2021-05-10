@@ -6,7 +6,7 @@ from __future__ import unicode_literals
 import numpy as np
 import os
 
-def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=None):
+def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=None, is_staticshape=True):
     from openvino.inference_engine import IECore
     import ngraph as ng
     from ngraph import opset7
@@ -223,39 +223,46 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     '''
     # Op conversion
     '''
-    #inputs
-    node_bboxes = ng.parameter(shape=input_boxes.shape, name='boxes', dtype=np.float32)
-    node_scores = ng.parameter(shape=input_scores.shape, name='scores', dtype=np.float32)
+    def multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, is_staticshape):
+        # parameters
+        if is_staticshape:
+            node_bboxes = ng.parameter(shape=input_boxes.shape, name='boxes', dtype=np.float32)
+            node_scores = ng.parameter(shape=input_scores.shape, name='scores', dtype=np.float32)
+        else:            
+            from ngraph.impl import Dimension, Function, PartialShape, Shape
+            node_bboxes = ng.parameter(shape=PartialShape.dynamic(), name='boxes', dtype=np.float32)
+            node_scores = ng.parameter(shape=PartialShape.dynamic(), name='scores', dtype=np.float32)
 
-    if len(input_scores.shape) == 2:
-        # inputs: scores & bboxes is lod tensor
-        print('\033[91m' + "{} not implemented yet! ".format('lod tensor inputs') + '\033[0m')
-    else:
+        # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
         #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)    
+        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
 
-    assert isinstance(graph, list)
-    print('\033[94m' + "executable_network graph {} {}".format(type(graph), graph[0]) + '\033[0m')
-    result_node0 = ng.result(graph[0], 'debug0')
-    result_node1 = ng.result(graph[1], 'debug1')
-    result_node2 = ng.result(graph[2], 'debug2')     
+        assert isinstance(graph, list)
+        print('\033[94m' + "graph {} {}".format(type(graph), graph[0]) + '\033[0m')
 
+        # results
+        result_node0 = ng.result(graph[0], 'debug0')
+        result_node1 = ng.result(graph[1], 'debug1')
+        result_node2 = ng.result(graph[2], 'debug2')          
+
+        # function 
+        function = ng.Function(graph, [node_bboxes, node_scores], "nms")
+        ie_network = ng.function_to_cnn(function)
+
+        orig_model_name = "../models/multiclass_nms_test1"
+        ie_network.serialize(orig_model_name + ".xml", orig_model_name + ".bin")
+
+        return ie_network      
 
     '''
     # runtime
     '''
-    function = ng.Function([result_node0, result_node1, result_node2], [node_bboxes, node_scores], "nms")
-    ie_network = ng.function_to_cnn(function)
-
-    orig_model_name = "../models/multiclass_nms_test1"
-    ie_network.serialize(orig_model_name + ".xml", orig_model_name + ".bin")
-
     ie = IECore()
+    ie_network = multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, is_staticshape)
     executable_network = ie.load_network(ie_network, 'CPU')
     output = executable_network.infer(inputs={'boxes': input_boxes,
                                               'scores': input_scores})
-
 
     print('\033[92m' + "executable_network output {} ".format(output) + '\033[0m')
     
