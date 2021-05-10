@@ -257,8 +257,8 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
-        graph = [select_bbox_indices, select_scores, valid_outputs]
-        #graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
+        #graph = [select_bbox_indices, select_scores, valid_outputs]
+        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
         
         # result
         assert isinstance(graph, list)        

@@ -298,6 +298,11 @@ def main(): # multiclass_nms
     test_case[4]['boxes'] = test_case[4]['boxes'].astype('float64') 
     test_case[4]['scores'] = test_case[4]['scores'].astype('float64')
 
+    # test case 5: normalize
+    # PASS
+    test_case[5] = test_case[3].copy()
+    test_case[5]['normalized'] = False
+
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
         # log(exp(shiftx)), may get log(0)=INF
@@ -401,7 +406,7 @@ def main(): # multiclass_nms
 
     # step 4. compare 
     # Try different tolerence
-    #validate(pred_pdpd, pred_ngraph)
+    validate(pred_pdpd, pred_ngraph)
     #validate(pred_pdpd, pred_ngraph, rtol=1e-4, atol=1e-5) 
 
 
