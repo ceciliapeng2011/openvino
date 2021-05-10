@@ -66,7 +66,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     # select_bbox_indices: shape [num_selected_boxes, 3], num_selected_boxes = min(M, max_ouput_boxes_per_class) * N * C
     # max_ouput_boxes_per_class equals nms_top_k in pdpd_attrs.
     # select_scores: shape [num_selected_boxes, 3]
-    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, input_scores, input_bboxes, pdpd_attrs, is_lod_input=False, hack_nonzero=None):
+    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, N : int, M : int, is_lod_input=False, hack_nonzero=None):
         selected_out, selected_indices, selected_num = [], [], [] # store outputs of this graph
         hack_nonzero_idx = 0
 
@@ -117,8 +117,13 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         if keep_top_k < 0:
             keep_top_k = 100000
 
-        N = input_scores.shape[0]
-        M = input_scores.shape[2]
+        '''
+        shape_input_scores = ng.shape_of(node_scores, name='shape_select_scores') # shape (N, C, M)
+        N = ng.gather(shape_input_scores, const_values[0], axis=0, name='N_batch_size') # shape (1,)
+        M = ng.gather(shape_input_scores, const_values[2], axis=0, name='M_num_boxes') # shape (1,)
+        return [shape_input_scores, N, M]
+        '''
+
         for i in range(N):
             print("~~~~ loop start for image {}/{} ~~~~~".format(i, N))
 
@@ -178,7 +183,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
             const_02 = ng.constant([0,2], dtype=np.int64)
             gather_bbox_indices = ng.gather(topk_bboxes_indices, indices=const_02, axis=1, name='gather_bbox_indices') # shape (S3, 2) containing triplets (batch_index, box_index)            
-            gather_bboxes = ng.gather_nd(input_bboxes, indices=gather_bbox_indices, batch_dims=0, name='gather_bboxes') # shape (S3, 4) containg triplets of bbox coords.
+            gather_bboxes = ng.gather_nd(node_bboxes, indices=gather_bbox_indices, batch_dims=0, name='gather_bboxes') # shape (S3, 4) containg triplets of bbox coords.
             
             # concat the final result for current image
             sort_by_score_results = ng.concat([topk_class_id, topk_scores, gather_bboxes], axis=1, name='sort_by_score_results'+str(i))            
@@ -236,15 +241,10 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
         #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
+        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, N = input_scores.shape[0], M = input_scores.shape[2], hack_nonzero=hack_nonzero)
 
         assert isinstance(graph, list)
-        print('\033[94m' + "graph {} {}".format(type(graph), graph[0]) + '\033[0m')
-
-        # results
-        result_node0 = ng.result(graph[0], 'debug0')
-        result_node1 = ng.result(graph[1], 'debug1')
-        result_node2 = ng.result(graph[2], 'debug2')          
+        print('\033[94m' + "graph {} {}".format(type(graph), graph[0]) + '\033[0m')       
 
         # function 
         function = ng.Function(graph, [node_bboxes, node_scores], "nms")
