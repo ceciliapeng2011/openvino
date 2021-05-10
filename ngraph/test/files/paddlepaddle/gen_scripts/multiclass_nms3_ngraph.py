@@ -10,6 +10,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     from openvino.inference_engine import IECore
     import ngraph as ng
     from ngraph import opset7
+    from ngraph.impl import Dimension, PartialShape, Shape
 
     # nms
     # node_bboxes: shape (N, M, 4)
@@ -66,7 +67,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     # select_bbox_indices: shape [num_selected_boxes, 3], num_selected_boxes = min(M, max_ouput_boxes_per_class) * N * C
     # max_ouput_boxes_per_class equals nms_top_k in pdpd_attrs.
     # select_scores: shape [num_selected_boxes, 3]
-    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, N : int, M : int, is_lod_input=False, hack_nonzero=None):
+    def keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, is_lod_input=False, hack_nonzero=None):
         selected_out, selected_indices, selected_num = [], [], [] # store outputs of this graph
         hack_nonzero_idx = 0
 
@@ -117,106 +118,108 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         if keep_top_k < 0:
             keep_top_k = 100000
 
-        '''
-        shape_input_scores = ng.shape_of(node_scores, name='shape_select_scores') # shape (N, C, M)
-        N = ng.gather(shape_input_scores, const_values[0], axis=0, name='N_batch_size') # shape (1,)
-        M = ng.gather(shape_input_scores, const_values[2], axis=0, name='M_num_boxes') # shape (1,)
-        return [shape_input_scores, N, M]
-        '''
+        shape_input_scores = node_scores.get_partial_shape()
+        print('\033[91m' + "shape of inputs is {} ".format("static" if shape_input_scores.is_static else "dynamic") + '\033[0m')
+        if shape_input_scores.is_static:        
+            N = shape_input_scores.get_dimension(0).get_length()
+            M = shape_input_scores.get_dimension(2).get_length() 
 
-        for i in range(N):
-            print("~~~~ loop start for image {}/{} ~~~~~".format(i, N))
+            for i in range(N):
+                print("~~~~ loop start for image {}/{} ~~~~~".format(i, N))
 
-            #
-            # gather the bboxes and scores for this image.
-            #
-            image_id = ng.gather(select_scores, indices=const_values[0], axis=const_values[1], name='gather_image_id') # shape (S1, 1)
-            squeezed_image_id = ng.squeeze(image_id, axes=const_values[1], name='squeezed_image_id') # shape (S1,)
+                #
+                # gather the bboxes and scores for this image.
+                #
+                image_id = ng.gather(select_scores, indices=const_values[0], axis=const_values[1], name='gather_image_id') # shape (S1, 1)
+                squeezed_image_id = ng.squeeze(image_id, axes=const_values[1], name='squeezed_image_id') # shape (S1,)
 
-            const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
-            equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
-            #return [select_scores, image_id, equal_imageid]
-            
-            if hack_nonzero is not None:
-                equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
-                hack_nonzero_idx += 1
-            nonzero_imageid = ng.non_zero(equal_imageid, output_type="i32", name='nonzero_imageid')  # shape (1, S2) #Unsupported dynamic ops
+                const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
+                equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
+                #return [select_scores, image_id, equal_imageid]
+                
+                if hack_nonzero is not None:
+                    equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
+                    hack_nonzero_idx += 1
+                nonzero_imageid = ng.non_zero(equal_imageid, output_type="i32", name='nonzero_imageid')  # shape (1, S2) #Unsupported dynamic ops
 
-            cur_select_bbox_indices = ng.gather(select_bbox_indices, indices=nonzero_imageid, axis=const_values[0]) # shape (1, S2, 3)
-            cur_select_bbox_indices = ng.squeeze(cur_select_bbox_indices, axes=const_values[0], name='select_bbox_indices')
+                cur_select_bbox_indices = ng.gather(select_bbox_indices, indices=nonzero_imageid, axis=const_values[0]) # shape (1, S2, 3)
+                cur_select_bbox_indices = ng.squeeze(cur_select_bbox_indices, axes=const_values[0], name='select_bbox_indices')
 
-            cur_select_scores = ng.gather(select_scores, indices=nonzero_imageid, axis=const_values[0]) # shape (1, S2, 3)
-            cur_select_scores = ng.squeeze(cur_select_scores, axes=const_values[0], name='cur_select_scores')
+                cur_select_scores = ng.gather(select_scores, indices=nonzero_imageid, axis=const_values[0]) # shape (1, S2, 3)
+                cur_select_scores = ng.squeeze(cur_select_scores, axes=const_values[0], name='cur_select_scores')
 
-            # 
-            # select_topk
-            #
-            shape_select_scores = ng.shape_of(cur_select_scores, name='shape_select_scores') # shape (2,) with value [S2, 3]
-            gather_num_select = ng.gather(shape_select_scores, const_values[0], axis=0, name='gather_num_select') # shape (1,)
-            
-            # min(keep_top_k, num_select)
-            node_keep_top_k = ng.constant(np.array([keep_top_k]))
-            concat_topK_select_num = ng.concat([gather_num_select, node_keep_top_k], axis=0, name='concat_topK_select_num')                
-            num_select = ng.reduce_min(concat_topK_select_num, reduction_axes=[0], keep_dims=False, name='reduce_min_keep_top_k') # shape () # note: num_select is a scaler here now.
-            
-            # 
-            # select topk scores indices
-            #
-            # Since sort_result_descending=True, scores are ordered, we can just use Slice to get topK either. 
-            # Unluckily Runtime StrideSlice has no dynamic shape support so far.
-            gather_scores = ng.gather(cur_select_scores, indices=const_values[2], axis=const_values[1], name='gather_select_scores') # shape (S2, 1)
-            gather_scores = ng.squeeze(gather_scores, axes=const_values[1], name='gather_scores') # shape (S2,)  
+                # 
+                # select_topk
+                #
+                shape_select_scores = ng.shape_of(cur_select_scores, name='shape_select_scores') # shape (2,) with value [S2, 3]
+                gather_num_select = ng.gather(shape_select_scores, const_values[0], axis=0, name='gather_num_select') # shape (1,)
+                
+                # min(keep_top_k, num_select)
+                node_keep_top_k = ng.constant(np.array([keep_top_k]))
+                concat_topK_select_num = ng.concat([gather_num_select, node_keep_top_k], axis=0, name='concat_topK_select_num')                
+                num_select = ng.reduce_min(concat_topK_select_num, reduction_axes=[0], keep_dims=False, name='reduce_min_keep_top_k') # shape () # note: num_select is a scaler here now.
+                
+                # 
+                # select topk scores indices
+                #
+                # Since sort_result_descending=True, scores are ordered, we can just use Slice to get topK either. 
+                # Unluckily Runtime StrideSlice has no dynamic shape support so far.
+                gather_scores = ng.gather(cur_select_scores, indices=const_values[2], axis=const_values[1], name='gather_select_scores') # shape (S2, 1)
+                gather_scores = ng.squeeze(gather_scores, axes=const_values[1], name='gather_scores') # shape (S2,)  
 
-            node_topk = ng.topk(gather_scores, num_select, axis=0, mode='max', sort='value', index_element_type='i64', name='topK') # K must be positive, must be a scaler
-            topk_scores, topk_indices = node_topk.outputs()  # shape (S3,)
-            topk_scores = ng.unsqueeze(topk_scores, axes=const_values[1], name='topk_scores')            
+                node_topk = ng.topk(gather_scores, num_select, axis=0, mode='max', sort='value', index_element_type='i64', name='topK') # K must be positive, must be a scaler
+                topk_scores, topk_indices = node_topk.outputs()  # shape (S3,)
+                topk_scores = ng.unsqueeze(topk_scores, axes=const_values[1], name='topk_scores')            
 
-            # 
-            # gather corresponding  class, boxes_id, then bboxes
-            #
-            topk_bboxes_indices = ng.gather(cur_select_bbox_indices, indices=topk_indices, axis=const_values[0], name='topk_bboxes_indices') # shape (S3, 3)
+                # 
+                # gather corresponding  class, boxes_id, then bboxes
+                #
+                topk_bboxes_indices = ng.gather(cur_select_bbox_indices, indices=topk_indices, axis=const_values[0], name='topk_bboxes_indices') # shape (S3, 3)
 
-            topk_class_id = ng.gather(topk_bboxes_indices, indices=const_values[1], axis=const_values[1], name='gather_class_id') # shape (S3, 1)
-            topk_class_id = ng.convert(topk_class_id, destination_type=np.float, name='topk_class_id')
+                topk_class_id = ng.gather(topk_bboxes_indices, indices=const_values[1], axis=const_values[1], name='gather_class_id') # shape (S3, 1)
+                topk_class_id = ng.convert(topk_class_id, destination_type=np.float, name='topk_class_id')
 
-            topk_box_id = ng.gather(topk_bboxes_indices, indices=const_values[2], axis=const_values[1], name='gather_box_id') # shape (S3, 1)                    
+                topk_box_id = ng.gather(topk_bboxes_indices, indices=const_values[2], axis=const_values[1], name='gather_box_id') # shape (S3, 1)                    
 
-            const_02 = ng.constant([0,2], dtype=np.int64)
-            gather_bbox_indices = ng.gather(topk_bboxes_indices, indices=const_02, axis=1, name='gather_bbox_indices') # shape (S3, 2) containing triplets (batch_index, box_index)            
-            gather_bboxes = ng.gather_nd(node_bboxes, indices=gather_bbox_indices, batch_dims=0, name='gather_bboxes') # shape (S3, 4) containg triplets of bbox coords.
-            
-            # concat the final result for current image
-            sort_by_score_results = ng.concat([topk_class_id, topk_scores, gather_bboxes], axis=1, name='sort_by_score_results'+str(i))            
+                const_02 = ng.constant([0,2], dtype=np.int64)
+                gather_bbox_indices = ng.gather(topk_bboxes_indices, indices=const_02, axis=1, name='gather_bbox_indices') # shape (S3, 2) containing triplets (batch_index, box_index)            
+                gather_bboxes = ng.gather_nd(node_bboxes, indices=gather_bbox_indices, batch_dims=0, name='gather_bboxes') # shape (S3, 4) containg triplets of bbox coords.
+                
+                # concat the final result for current image
+                sort_by_score_results = ng.concat([topk_class_id, topk_scores, gather_bboxes], axis=1, name='sort_by_score_results'+str(i))            
 
-            # Phase 3: 
-            # sort by class_id
-            node_topk = ng.topk(topk_class_id, num_select, axis=0, mode='min', sort='value')
-            data, indices = node_topk.outputs() # shape (S3,1)
-            indices = ng.squeeze(indices, axes=const_values[1], name='topk_indices')  # shape (S3,)    
+                # Phase 3: 
+                # sort by class_id
+                node_topk = ng.topk(topk_class_id, num_select, axis=0, mode='min', sort='value')
+                data, indices = node_topk.outputs() # shape (S3,1)
+                indices = ng.squeeze(indices, axes=const_values[1], name='topk_indices')  # shape (S3,)    
 
-            # output['Out']
-            sort_by_class_results = ng.gather(sort_by_score_results, indices, axis=const_values[0], name='sort_by_class_results'+str(i)) # shape (S3, 6)           
-            selected_out.append(sort_by_class_results) 
+                # output['Out']
+                sort_by_class_results = ng.gather(sort_by_score_results, indices, axis=const_values[0], name='sort_by_class_results'+str(i)) # shape (S3, 6)           
+                selected_out.append(sort_by_class_results) 
 
-            # output['Index']
-            final_indices = ng.gather(topk_box_id, indices, axis=const_values[0], name='final_indices'+str(i)) # shape (S3, 1)
-            const_batch_idx = ng.constant([i], name='const_batch_idx')
-            const_M = ng.constant([M], name='const_M')
-            mul_stride = ng.multiply(const_batch_idx, const_M)
-            mul_stride = ng.convert(mul_stride, destination_type=np.int32)
-            final_indices = ng.add(final_indices, mul_stride, name='final_indices'+str(i))
-            selected_indices.append(final_indices)        
+                # output['Index']
+                final_indices = ng.gather(topk_box_id, indices, axis=const_values[0], name='final_indices'+str(i)) # shape (S3, 1)
+                const_batch_idx = ng.constant([i], name='const_batch_idx')
+                const_M = ng.constant([M], name='const_M')
+                mul_stride = ng.multiply(const_batch_idx, const_M)
+                mul_stride = ng.convert(mul_stride, destination_type=np.int32)
+                final_indices = ng.add(final_indices, mul_stride, name='final_indices'+str(i))
+                selected_indices.append(final_indices)
 
-            #if hack_nonzero_idx > 2: ###TODO DEBUG NEXT MONDAY
-            #    return [const_batch_idx, mul_stride, final_indices] 
+                # output['NmsRoisNum']
+                select_bboxes_shape = ng.shape_of(final_indices)
+                indices = ng.constant([0], dtype=np.int64)
+                rois_num = ng.gather(select_bboxes_shape, indices=indices, axis=const_values[0], name='NmsRoisNum'+str(i))
+                selected_num.append(rois_num)
 
-            # output['NmsRoisNum']
-            select_bboxes_shape = ng.shape_of(final_indices)
-            indices = ng.constant([0], dtype=np.int64)
-            rois_num = ng.gather(select_bboxes_shape, indices=indices, axis=const_values[0], name='NmsRoisNum'+str(i))
-            selected_num.append(rois_num)
-
-            print("~~~~ loop end for image {}/{} ~~~~~".format(i, N))
+                print("~~~~ loop end for image {}/{} ~~~~~".format(i, N))
+             
+        else:
+            shape_input_scores = ng.shape_of(node_scores, name='shape_input_scores') # shape (N, C, M)
+            N = ng.gather(shape_input_scores, const_values[0], axis=0, name='N_batch_size') # shape (1,)
+            M = ng.gather(shape_input_scores, const_values[2], axis=0, name='M_num_boxes') # shape (1,)
+            raise Exception("dynamic shape unsupported yet!!!!")
 
         # concat each output of image
         selected_out = ng.concat(selected_out, axis=0, name='concat_selected_out')  # output['Out']
@@ -233,15 +236,14 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         if is_staticshape:
             node_bboxes = ng.parameter(shape=input_boxes.shape, name='boxes', dtype=np.float32)
             node_scores = ng.parameter(shape=input_scores.shape, name='scores', dtype=np.float32)
-        else:            
-            from ngraph.impl import Dimension, Function, PartialShape, Shape
+        else: 
             node_bboxes = ng.parameter(shape=PartialShape.dynamic(), name='boxes', dtype=np.float32)
             node_scores = ng.parameter(shape=PartialShape.dynamic(), name='scores', dtype=np.float32)
 
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
         #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, N = input_scores.shape[0], M = input_scores.shape[2], hack_nonzero=hack_nonzero)
+        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
 
         assert isinstance(graph, list)
         print('\033[94m' + "graph {} {}".format(type(graph), graph[0]) + '\033[0m')       
