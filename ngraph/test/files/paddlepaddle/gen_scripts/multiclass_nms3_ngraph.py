@@ -6,7 +6,7 @@ from __future__ import unicode_literals
 import numpy as np
 import os
 
-def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=None, is_staticshape=True):
+def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=None, static_shape=True, static_type=True):
     from openvino.inference_engine import IECore
     import ngraph as ng
     from ngraph import opset7
@@ -35,11 +35,28 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         # the paddle data format is x1,y1,x2,y2
         kwargs = {'center_point_box': 0}
 
+        # type adapter, as,
+        # Rumtime: Expected bf16, fp16 or fp32 as element type for the 'boxes' input.
+        # Even if we convert type f32 here, we cannot control user input fp64. then the error we get,
+        # inference-engine/src/mkldnn_plugin/mkldnn_plugin.cpp:399 [ NOT_IMPLEMENTED ] Input image format FP64 is not supported yet...
+        '''
+        bboxes_dtype = node_bboxes.get_output_element_type(0).get_type_name()
+        scores_dtype = node_scores.get_output_element_type(0).get_type_name()
+        print('\033[91m' + "DEBUG: {} ".format(bboxes_dtype) + '\033[0m')
+        if bboxes_dtype == 'f64':
+            node_bboxes = ng.convert(node_bboxes, destination_type='f32')
+        if scores_dtype == 'f64':
+            node_scores = ng.convert(node_scores, destination_type='f32')
+
+        bboxes_dtype = node_bboxes.get_output_element_type(0).get_type_name()
+        print('\033[91m' + "DEBUG: {} ".format(bboxes_dtype) + '\033[0m')
+        '''
+
         if normalized:     
             node_nms = ng.non_max_suppression(node_bboxes, node_scores,
                                                 max_output_boxes_per_class=node_max_output_boxes_per_class,
                                                 iou_threshold=node_iou_threshold,
-                                                output_type='i32', #BUG? runtime error if i64.
+                                                output_type='i32', #BUG? runtime error if i64. anyway, PDPD always output int32.
                                                 score_threshold=node_score_threshold,
                                                 sort_result_descending=True,
                                                 name='non_max_suppression')
@@ -53,7 +70,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             node_nms = ng.non_max_suppression(node_new_bboxes, node_scores,
                                                 max_output_boxes_per_class=node_max_output_boxes_per_class,
                                                 iou_threshold=node_iou_threshold,
-                                                output_type='i64',
+                                                output_type='i32',
                                                 score_threshold=node_score_threshold,
                                                 sort_result_descending=True, #onnx: sort_result_descending=false
                                                 name='non_max_suppression')
@@ -231,25 +248,27 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     '''
     # Op conversion
     '''
-    def multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, is_staticshape):
+    def multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, shape_static:bool, type_static:bool):
         # parameters
-        if is_staticshape:
-            node_bboxes = ng.parameter(shape=input_boxes.shape, name='boxes', dtype=np.float32)
-            node_scores = ng.parameter(shape=input_scores.shape, name='scores', dtype=np.float32)
-        else: 
-            node_bboxes = ng.parameter(shape=PartialShape.dynamic(), name='boxes', dtype=np.float32)
-            node_scores = ng.parameter(shape=PartialShape.dynamic(), name='scores', dtype=np.float32)
+        node_bboxes = ng.parameter(shape=input_boxes.shape if shape_static else PartialShape.dynamic(), name='boxes', 
+                            dtype=input_boxes.dtype)
+        node_scores = ng.parameter(shape=input_scores.shape if shape_static else PartialShape.dynamic(), name='scores', 
+                            dtype=input_scores.dtype)
 
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
-        #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
-
-        assert isinstance(graph, list)
-        print('\033[94m' + "graph {} {}".format(type(graph), graph[0]) + '\033[0m')       
+        graph = [select_bbox_indices, select_scores, valid_outputs]
+        #graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
+        
+        # result
+        assert isinstance(graph, list)        
+        node_results = []
+        for result in graph:
+            node_result = ng.result(result)
+            node_results.append(node_result)    
 
         # function 
-        function = ng.Function(graph, [node_bboxes, node_scores], "nms")
+        function = ng.Function(node_results, [node_bboxes, node_scores], "nms")
         ie_network = ng.function_to_cnn(function)
 
         orig_model_name = "../models/multiclass_nms_test1"
@@ -261,7 +280,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     # runtime
     '''
     ie = IECore()
-    ie_network = multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, is_staticshape)
+    ie_network = multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, static_shape, static_type)
     executable_network = ie.load_network(ie_network, 'CPU')
     output = executable_network.infer(inputs={'boxes': input_boxes,
                                               'scores': input_scores})

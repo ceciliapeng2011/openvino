@@ -148,12 +148,14 @@ def validate(pred_ref: list, pred_ie: dict, rtol=1e-05, atol=1e-08):
         idx = 0
         for key in pred_ie:
             comp2 = np.all(np.isclose(pred_ref[idx], pred_ie[key], rtol=rtol, atol=atol, equal_nan=True))
+            comp2_type = pred_ref[idx].dtype == pred_ie[key].dtype
+            dtype_compare = "data type {}".format("identical" if comp2_type else "different")
             if not comp2:
-                print('\033[91m' + "PDPD and IE results are different at {} ".format(idx) + '\033[0m')
+                print('\033[91m' + "PDPD and IE results are different at {}, {} ".format(idx, dtype_compare) + '\033[0m')
                 print_2Dlike(pred_ref[idx], "pdpd{}".format(idx))        
                 print_2Dlike(pred_ie[key], "ie{}".format(idx))                  
             else:
-                print('\033[92m' + "PDPD and IE results are identical at {} ".format(idx) + '\033[0m') 
+                print('\033[92m' + "PDPD and IE results are identical at {}, {} ".format(idx, dtype_compare) + '\033[0m') 
             idx += 1          
 
 def main(): # multiclass_nms 
@@ -255,7 +257,7 @@ def main(): # multiclass_nms
                             [0.05, 0.35, 0.95, 0.96]],
                             [[0.21, 0.01, 0.85, 0.95],
                             [0.4,  0.09, 0.51, 0.84],
-                            [0.37, 0.14, 0.61, 0.95]]]).astype(np.float32),
+                            [0.37, 0.14, 0.61, 0.95]]]).astype('float32'),
 
         'scores' : np.array([
                             [[0.12, 0.12, 0.4],
@@ -268,7 +270,7 @@ def main(): # multiclass_nms
                             [0.99, 0.99, 0.96],
                             [0.95, 0.90, 0.91],
                             [0.93, 0.95, 0.87]]                           
-                            ]).astype(np.float32),                       
+                            ]).astype('float32'),                       
 
         'pdpd_attrs' : {
             'nms_type': 'multiclass_nms3', #PDPD Op type
@@ -288,10 +290,13 @@ def main(): # multiclass_nms
         ]
     } 
 
-    # test case 4: data type
+    # test case 4: data type float64
+    # FAILED, as
+    # FP64 is not supported, 
+    # inference-engine/src/mkldnn_plugin/mkldnn_plugin.cpp:399 [ NOT_IMPLEMENTED ] Input image format FP64 is not supported yet...
     test_case[4] = test_case[3].copy()
-    test_case[4]['boxes'] = test_case[4]['boxes'].astype(np.float)  # BUG in PDPD: Tensor holds the wrong type, it holds double, but desires to be float.      
-    test_case[4]['scores'] = test_case[4]['scores'].astype(np.float)
+    test_case[4]['boxes'] = test_case[4]['boxes'].astype('float64') 
+    test_case[4]['scores'] = test_case[4]['scores'].astype('float64')
 
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
@@ -383,7 +388,7 @@ def main(): # multiclass_nms
     pred_pdpd = multiclass_nms('multiclass_nms_test1', data_bboxes, data_scores, pdpd_attrs)
 
     from multiclass_nms3_ngraph import ngraph_multiclass_nms3
-    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, pdpd_attrs, hack_nonzero, is_staticshape=True)
+    pred_ngraph = ngraph_multiclass_nms3(data_bboxes, data_scores, pdpd_attrs, hack_nonzero, static_shape=True, static_type=True)
 
     # step 2. generate onnx model
     # !paddle2onnx --model_dir=../models/yolo_box_test1/ --save_file=../models/yolo_box_test1/yolo_box_test1.onnx --opset_version=10
