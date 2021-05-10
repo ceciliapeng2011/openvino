@@ -286,7 +286,12 @@ def main(): # multiclass_nms
             np.array([0., 0., 0., 1., 1., 1., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]), #image 0
             np.array([1., 1., 1., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) #image 1
         ]
-    }              
+    } 
+
+    # test case 4: data type
+    test_case[4] = test_case[3].copy()
+    test_case[4]['boxes'] = test_case[4]['boxes'].astype(np.float)  # BUG in PDPD: Tensor holds the wrong type, it holds double, but desires to be float.      
+    test_case[4]['scores'] = test_case[4]['scores'].astype(np.float)
 
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
