@@ -21,7 +21,7 @@ NamedOutputs range (const NodeContext& node) {
     auto stop_scalar = std::make_shared<ngraph::opset6::ReduceMin>(stop, axis, keep_dims);
     auto step_scalar = std::make_shared<ngraph::opset6::ReduceMin>(step, axis, keep_dims);
 
-    //TODO to support other data types other than FP32
+    //TODO to support other data types other than FP32 CVS-55267
     return node.default_single_output_mapping({std::make_shared<ngraph::opset6::Range>(start_scalar, stop_scalar, step_scalar, element::f32)}, {"Out"});
 }
 
