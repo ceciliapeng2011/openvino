@@ -252,14 +252,14 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     def multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, shape_static:bool, type_static:bool):
         # parameters
         node_bboxes = ng.parameter(shape=input_boxes.shape if shape_static else PartialShape.dynamic(), name='boxes', 
-                            dtype=np.float32) # Parameter fp64 not suppported by mklplugin.
+                            dtype=input_boxes.dtype) # Parameter fp64 not suppported by mklplugin.
         node_scores = ng.parameter(shape=input_scores.shape if shape_static else PartialShape.dynamic(), name='scores', 
-                            dtype=np.float32)
+                            dtype=input_scores.dtype)
 
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
-        graph = [select_bbox_indices, select_scores, valid_outputs]
-        #graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
+        #graph = [select_bbox_indices, select_scores, valid_outputs]
+        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
         
         # result
         assert isinstance(graph, list)        
