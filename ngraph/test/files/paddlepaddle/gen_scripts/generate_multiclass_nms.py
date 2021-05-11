@@ -428,6 +428,13 @@ def main(): # multiclass_nms
         ]
     }
 
+    # test case 9: no output
+    # TODO
+    # Here set 2.0 to test the case there is no outputs.
+    # In practical use, 0.0 < score_threshold < 1.0 
+    test_case[9] = test_case[3].copy()
+    test_case[9]['pdpd_attrs']['score_threshold'] = 2.0    
+
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
         # log(exp(shiftx)), may get log(0)=INF
@@ -498,7 +505,7 @@ def main(): # multiclass_nms
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)
     if 1:
-        T = 8
+        T = 9
         data_bboxes = test_case[T]['boxes']
         data_scores = test_case[T]['scores']
         pdpd_attrs = test_case[T]['pdpd_attrs']
