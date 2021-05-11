@@ -153,7 +153,6 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
                 const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
                 equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
-                return [select_scores]
                 
                 if hack_nonzero is not None:
                     equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE

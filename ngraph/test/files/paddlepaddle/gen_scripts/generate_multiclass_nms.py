@@ -373,7 +373,7 @@ def main(): # multiclass_nms
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)
     if 1:
-        T = 4
+        T = 3
         data_bboxes = test_case[T]['boxes']
         data_scores = test_case[T]['scores']
         pdpd_attrs = test_case[T]['pdpd_attrs']
@@ -406,7 +406,7 @@ def main(): # multiclass_nms
 
     # step 4. compare 
     # Try different tolerence
-    #validate(pred_pdpd, pred_ngraph)
+    validate(pred_pdpd, pred_ngraph)
     #validate(pred_pdpd, pred_ngraph, rtol=1e-4, atol=1e-5) 
 
 
