@@ -34,7 +34,6 @@ NamedOutputs batch_norm (const NodeContext& node) {
         return node.default_single_output_mapping({std::make_shared<ngraph::opset6::BatchNormInference>(
                 data, gamma, beta, mean, variance, node.get_attribute<float>("epsilon"))}, {"Y"});
     } else if(data_layout == "NHWC") {
-        auto rank = static_cast<unsigned long>(data.get_partial_shape().rank().get_length());
         auto input_order = ngraph::opset6::Constant::create(ngraph::element::i64, {4}, {0, 3, 1, 2});
         auto data_nhwc = std::make_shared<ngraph::opset6::Transpose>(data, input_order);
         auto node_batch_norm = std::make_shared<ngraph::opset6::BatchNormInference>(
