@@ -30,7 +30,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         #convert the paddle attribute to ngraph constant node
         node_score_threshold = ng.constant(pdpd_attrs['score_threshold'], name='score_threshold', dtype=np.float32)
         node_iou_threshold = ng.constant(iou_threshold, name='iou_threshold', dtype=np.float32)
-        node_max_output_boxes_per_class = ng.constant(nms_top_k, name='max_output_boxes_per_class', dtype=np.int64)
+        node_max_output_boxes_per_class = ng.constant(nms_top_k, name='max_output_boxes_per_class', dtype=np.int32)
         
         # the paddle data format is x1,y1,x2,y2
         kwargs = {'center_point_box': 0}
@@ -114,6 +114,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                     
             node_background = ng.constant(np.array([background]), dtype=np.float, name='node_background')
             notequal_background = ng.not_equal(select_class_id, node_background, name='notequal_background')
+            #return [notequal_background]
 
             if hack_nonzero is not None:
                 notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
@@ -121,7 +122,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero_background')  # shape (1, S1) #Unsupported dynamic ops            
 
             # non-background's
-            select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nonbg_select_scores') # shape (1, S1, 3)
+            select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nonbg_select_scores') # shape (1, S1, 3)            
             select_scores = ng.squeeze(select_scores, axes=const_values[0], name='select_scores')
              
             select_bbox_indices = ng.gather(select_bbox_indices, indices=nonzero, axis=const_values[0], name='nonbg_select_bbox_indices') # shape (1, S1, 3)
@@ -152,7 +153,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
                 const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
                 equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
-                #return [select_scores, image_id, equal_imageid]
+                return [select_scores]
                 
                 if hack_nonzero is not None:
                     equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
@@ -251,14 +252,14 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     def multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero, shape_static:bool, type_static:bool):
         # parameters
         node_bboxes = ng.parameter(shape=input_boxes.shape if shape_static else PartialShape.dynamic(), name='boxes', 
-                            dtype=input_boxes.dtype)
+                            dtype=np.float32) # Parameter fp64 not suppported by mklplugin.
         node_scores = ng.parameter(shape=input_scores.shape if shape_static else PartialShape.dynamic(), name='scores', 
-                            dtype=input_scores.dtype)
+                            dtype=np.float32)
 
         # body
         select_bbox_indices, select_scores, valid_outputs = nms(node_bboxes, node_scores, pdpd_attrs)
-        #graph = [select_bbox_indices, select_scores, valid_outputs]
-        graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
+        graph = [select_bbox_indices, select_scores, valid_outputs]
+        #graph = keep_top_k(select_bbox_indices, select_scores, valid_outputs, node_scores, node_bboxes, pdpd_attrs, hack_nonzero=hack_nonzero)
         
         # result
         assert isinstance(graph, list)        
