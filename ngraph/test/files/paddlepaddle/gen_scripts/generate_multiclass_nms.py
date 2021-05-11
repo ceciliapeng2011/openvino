@@ -163,7 +163,7 @@ def main(): # multiclass_nms
     test_case = [None] * 10
 
     # case PASS
-    test_case[0] = {# N 1, C 1
+    test_case[0] = {# N 1, C 1, M 6
         'boxes' : np.array([[
             [0.0, 0.0, 1.0, 1.0],
             [0.0, 0.1, 1.0, 1.1],
@@ -186,12 +186,14 @@ def main(): # multiclass_nms
             'nms_eta': 1.0
         },
 
-        'hack_nonzero' : np.array([1., 1., 0., 0., 0., 0.])
+        'hack_nonzero' : [
+            np.array([1., 1., 0., 0., 0., 0.])
+        ]
 
     }
 
     # case PASS
-    test_case[1] = { # N 1, C 2
+    test_case[1] = { # N 1, C 2, M 6
         'boxes' : np.array([[
             [0.0, 0.0, 1.0, 1.0],
             [0.0, 0.1, 1.0, 1.1],
@@ -215,9 +217,14 @@ def main(): # multiclass_nms
             'nms_eta': 1.0
         },
 
-        'hack_nonzero' : np.array([0., 1., 0., 1.])
+        'hack_nonzero' : [
+            np.array([0., 1., 0., 1.]),
+            np.array([1., 1.])
+        ]
     }   
 
+    # all are background.. so no output.
+    # TODO
     test_case[2] = { # N 2, C 1, M 6
         'boxes' : np.array([[[0.0, 0.0, 1.0, 1.0],
                            [0.0, 0.1, 1.0, 1.1],
@@ -247,11 +254,12 @@ def main(): # multiclass_nms
         },
 
         'hack_nonzero' : [
-            np.array([0., 0., 0., 0.])
+            np.array([0., 0., 0., 0.]), # ALL ARE BACKGROUND. EARLY DROP.
+            np.array([1., 1.])
         ]
     } 
 
-    test_case[3] = { # N 2, C 5, M 3
+    test_case[3] = { # N 2, C 5, M 3 PASS
         'boxes' : np.array([[[0.5,  0.06, 0.79, 0.76],
                             [0.34, 0.13, 0.52, 0.96],
                             [0.05, 0.35, 0.95, 0.96]],
@@ -302,6 +310,123 @@ def main(): # multiclass_nms
     # PASS
     test_case[5] = test_case[3].copy()
     test_case[5]['normalized'] = False
+
+    # case 6: no detection in the first image
+    test_case[6] = { # N 2, C 5, M 3
+        'boxes' : np.array([[[0.5,  0.06, 0.79, 0.76],
+                            [0.34, 0.13, 0.52, 0.96],
+                            [0.05, 0.35, 0.95, 0.96]],
+                            [[0.21, 0.01, 0.85, 0.95],
+                            [0.4,  0.09, 0.51, 0.84],
+                            [0.37, 0.14, 0.61, 0.95]]]).astype('float32'),
+
+        'scores' : np.array([
+                            [[0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0,  0.0, 0.0]],
+                            [[0.12, 0.2, 0.10],
+                            [0.91, 0.99,  0.95],
+                            [0.99, 0.99, 0.96],
+                            [0.95, 0.90, 0.91],
+                            [0.93, 0.95, 0.87]]                           
+                            ]).astype('float32'),                       
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': -1,
+            'score_threshold': 0.0, # the less, the more bbox kept.
+            'nms_top_k': 2, # max_output_box_per_class
+            'nms_threshold': 0.02, # the bigger, the more bbox kept.
+            'keep_top_k': 2,  #-1, keep all
+            'normalized': True,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : [
+            np.array([0.]*20), #image 0
+            np.array([1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]) #image 1
+        ]
+    }     
+
+    # case 7: no detection in the second image
+    test_case[7] = { # N 2, C 5, M 3
+        'boxes' : np.array([[[0.5,  0.06, 0.79, 0.76],
+                            [0.34, 0.13, 0.52, 0.96],
+                            [0.05, 0.35, 0.95, 0.96]],
+                            [[0.21, 0.01, 0.85, 0.95],
+                            [0.4,  0.09, 0.51, 0.84],
+                            [0.37, 0.14, 0.61, 0.95]]]).astype('float32'),
+
+        'scores' : np.array([
+                            [[0.12, 0.12, 0.4],
+                            [0.54, 0.14, 0.29],
+                            [0.22, 0.22, 0.16],
+                            [0.18, 0.13, 0.12],
+                            [0.2,  0.45, 0.22]],            
+                            [[0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0,  0.0, 0.0]]                           
+                            ]).astype('float32'),                       
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': -1,
+            'score_threshold': 0.0, # the less, the more bbox kept.
+            'nms_top_k': 2, # max_output_box_per_class
+            'nms_threshold': 0.02, # the bigger, the more bbox kept.
+            'keep_top_k': 2,  #-1, keep all
+            'normalized': True,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : [
+            np.array([1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]), #image 0
+            np.array([0.]*20) #image 1
+        ]
+    }     
+
+    # case 8: no detection in this batch
+    test_case[8] = { # N 2, C 5, M 3
+        'boxes' : np.array([[[0.5,  0.06, 0.79, 0.76],
+                            [0.34, 0.13, 0.52, 0.96],
+                            [0.05, 0.35, 0.95, 0.96]],
+                            [[0.21, 0.01, 0.85, 0.95],
+                            [0.4,  0.09, 0.51, 0.84],
+                            [0.37, 0.14, 0.61, 0.95]]]).astype('float32'),
+
+        'scores' : np.array([
+                            [[0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0,  0.0, 0.0]],             
+                            [[0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            [0.0,  0.0, 0.0]]                           
+                            ]).astype('float32'),                       
+
+        'pdpd_attrs' : {
+            'nms_type': 'multiclass_nms3', #PDPD Op type
+            'background_label': -1,
+            'score_threshold': 0.0, # the less, the more bbox kept.
+            'nms_top_k': 2, # max_output_box_per_class
+            'nms_threshold': 0.02, # the bigger, the more bbox kept.
+            'keep_top_k': 2,  #-1, keep all
+            'normalized': True,
+            'nms_eta': 1.0
+        },
+
+        'hack_nonzero' : [
+            np.array([0.]*20), #image 0
+            np.array([0.]*20) #image 1
+        ]
+    }
 
     def softmax(x):
         # clip to shiftx, otherwise, when calc loss with
@@ -373,7 +498,7 @@ def main(): # multiclass_nms
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)
     if 1:
-        T = 3
+        T = 8
         data_bboxes = test_case[T]['boxes']
         data_scores = test_case[T]['scores']
         pdpd_attrs = test_case[T]['pdpd_attrs']

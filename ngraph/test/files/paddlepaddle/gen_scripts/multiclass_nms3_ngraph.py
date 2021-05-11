@@ -114,15 +114,29 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                     
             node_background = ng.constant(np.array([background]), dtype=np.float, name='node_background')
             notequal_background = ng.not_equal(select_class_id, node_background, name='notequal_background')
-            #return [notequal_background]
 
             if hack_nonzero is not None:
                 notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
-                hack_nonzero_idx += 1   
+                hack_nonzero_idx += 1 
+            
+            # TODO case 2
+            # inference-engine/src/inference_engine/cnn_network_ngraph_impl.cpp:83 nonzero_background has zero dimension which is not allowed
+            # So,
+            # if all zero, which means all are background, do early drop.
+            '''
+            node_max = ng.reduce_max(notequal_background, reduction_axes=[0], keep_dims=False, name='reduce_max')
+  
+            # How can implement such subgraph like, with 2 Loop(s) of trip count 1?
+            if all background:
+                # do
+            else:
+                # do
+            '''
+
             nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero_background')  # shape (1, S1) #Unsupported dynamic ops            
 
             # non-background's
-            select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nonbg_select_scores') # shape (1, S1, 3)            
+            select_scores = ng.gather(select_scores, indices=nonzero, axis=const_values[0], name='nonbg_select_scores') # shape (1, S1, 3)                        
             select_scores = ng.squeeze(select_scores, axes=const_values[0], name='select_scores')
              
             select_bbox_indices = ng.gather(select_bbox_indices, indices=nonzero, axis=const_values[0], name='nonbg_select_bbox_indices') # shape (1, S1, 3)
@@ -155,7 +169,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                 equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
                 
                 if hack_nonzero is not None:
-                    equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32) #HARDCODE
+                    equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32, name='equal_imageid') #HARDCODE                    
                     hack_nonzero_idx += 1
                 nonzero_imageid = ng.non_zero(equal_imageid, output_type="i32", name='nonzero_imageid')  # shape (1, S2) #Unsupported dynamic ops
 
@@ -183,6 +197,10 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                 # Unluckily Runtime StrideSlice has no dynamic shape support so far.
                 gather_scores = ng.gather(cur_select_scores, indices=const_values[2], axis=const_values[1], name='gather_select_scores') # shape (S2, 1)
                 gather_scores = ng.squeeze(gather_scores, axes=const_values[1], name='gather_scores') # shape (S2,)  
+
+                # TODO: case 6,7
+                # what if num_select == 0
+                # error: The value of 'K' must be a positive number. (got 0).
 
                 node_topk = ng.topk(gather_scores, num_select, axis=0, mode='max', sort='value', index_element_type='i64', name='topK') # K must be positive, must be a scaler
                 topk_scores, topk_indices = node_topk.outputs()  # shape (S3,)
@@ -239,6 +257,8 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             raise Exception("dynamic shape unsupported yet!!!!")
 
         # concat each output of image
+        # TODO: case 8
+        # what if inference-engine/src/inference_engine/cnn_network_ngraph_impl.cpp:83 concat_selected_out has zero dimension which is not allowed
         selected_out = ng.concat(selected_out, axis=0, name='concat_selected_out')  # output['Out']
         selected_indices = ng.concat(selected_indices, axis=0, name='concat_selected_indices')
         selected_num = ng.concat(selected_num, axis=0, name='concat_selected_num')
