@@ -2,6 +2,7 @@
 # pool2d paddle model generator
 #
 import numpy as np
+import copy #deepcopy
 from save_model import saveModel
 
 # bboxes shape (N, M, 4)
@@ -302,13 +303,13 @@ def main(): # multiclass_nms
     # FAILED, as
     # FP64 is not supported, 
     # inference-engine/src/mkldnn_plugin/mkldnn_plugin.cpp:399 [ NOT_IMPLEMENTED ] Input image format FP64 is not supported yet...
-    test_case[4] = test_case[3].copy()
+    test_case[4] = copy.deepcopy(test_case[3])
     test_case[4]['boxes'] = test_case[4]['boxes'].astype('float64') 
     test_case[4]['scores'] = test_case[4]['scores'].astype('float64')
 
     # test case 5: normalize
     # PASS
-    test_case[5] = test_case[3].copy()
+    test_case[5] = copy.deepcopy(test_case[3])
     test_case[5]['normalized'] = False
 
     # case 6: no detection in the first image
@@ -431,94 +432,18 @@ def main(): # multiclass_nms
     # test case 9: no output
     # TODO
     # Here set 2.0 to test the case there is no outputs.
-    # In practical use, 0.0 < score_threshold < 1.0 
-    test_case[9] = test_case[3].copy()
+    # In practical use, 0.0 < score_threshold < 1.0
+    test_case[9] = copy.deepcopy(test_case[3])
     test_case[9]['pdpd_attrs']['score_threshold'] = 2.0    
 
-    def softmax(x):
-        # clip to shiftx, otherwise, when calc loss with
-        # log(exp(shiftx)), may get log(0)=INF
-        shiftx = (x - np.max(x)).clip(-64.)
-        exps = np.exp(shiftx)
-        return exps / np.sum(exps)
-
-    def random_test (_N=1, _M=1200, _C=21, nonzero=None):
-        N = _N  #onnx multiclass_nms only supports input[batch_size] == 1.
-        M = _M
-        C = _C
-        BOX_SIZE = 4
-        background = 0
-        nms_threshold = 0.3
-        nms_top_k = 400  #max_output_boxes_per_class
-        keep_top_k = 10
-        score_threshold = 0.02
-
-        scores = np.random.random((N * M, C)).astype('float32')
-
-        scores = np.apply_along_axis(softmax, 1, scores)
-        scores = np.reshape(scores, (N, M, C))
-        scores = np.transpose(scores, (0, 2, 1))
-
-        boxes = np.random.random((N, M, BOX_SIZE)).astype('float32')
-        boxes[:, :, 0:2] = boxes[:, :, 0:2] * 0.5
-        boxes[:, :, 2:4] = boxes[:, :, 2:4] * 0.5 + 0.5
-
-        pdpd_attrs = {
-            'nms_type': 'multiclass_nms3', #PDPD Op type
-            'background_label': background,
-            'score_threshold': score_threshold,
-            'nms_top_k': nms_top_k,
-            'nms_threshold': nms_threshold,
-            'keep_top_k': keep_top_k,
-            'normalized': False,
-            'nms_eta': 1.0
-        }
-
-        return {'scores':scores, 'boxes':boxes, 'pdpd_attrs': pdpd_attrs, 'hack_nonzero': nonzero}
-
-    nonzero = [1]*8400
-    nonzero[13]=0
-    random_testcase[0] = random_test(1, 1200, 21, nonzero) # N 1, C 21, random
-
-    nonzero=[1]*58800
-    nonzero[50]=0
-    nonzero[61]=0
-    nonzero[68]=0
-    nonzero[78]=0
-    nonzero[89]=0
-    nonzero[99]=0
-    nonzero[138]=0
-    random_testcase[1] = random_test(2, 1200, 21, nonzero)  # N 7, C 1, random
-
-    nonzero=[1]*8400*2
-    nonzero[50]=0
-    nonzero[61]=0
-    nonzero[68]=0
-    nonzero[78]=0
-    nonzero[89]=0
-    nonzero[99]=0
-    nonzero[138]=0
-    random_testcase[2] = random_test(7, 1200, 21, nonzero)  # N 7, C 1, random    
-    
-    random_testcase[3] = random_test(2, 3, 5)  # N 2, M 3, C 5 
 
     # bboxes shape (N, M, 4) 
     # scores shape (N, C, M)
-    if 1:
-        T = 9
-        data_bboxes = test_case[T]['boxes']
-        data_scores = test_case[T]['scores']
-        pdpd_attrs = test_case[T]['pdpd_attrs']
-        hack_nonzero = test_case[T]['hack_nonzero']
-    else:
-        T = 3
-        data_bboxes = random_testcase[T]['boxes']
-        data_scores = random_testcase[T]['scores']
-        pdpd_attrs = random_testcase[T]['pdpd_attrs']
-        hack_nonzero = random_testcase[T]['hack_nonzero'] 
-        np.set_printoptions(precision=2)
-        np.set_printoptions(suppress=True)  
-        print("bboxes: {}, \n scores: {}".format(data_bboxes, data_scores))          
+    T = 3
+    data_bboxes = test_case[T]['boxes']
+    data_scores = test_case[T]['scores']
+    pdpd_attrs = test_case[T]['pdpd_attrs']
+    hack_nonzero = test_case[T]['hack_nonzero']       
 
     # For any change to pdpd_attrs, do -
     # step 1. generate paddle model
