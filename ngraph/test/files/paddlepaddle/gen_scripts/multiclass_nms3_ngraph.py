@@ -103,7 +103,11 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
         select_bbox_indices = ng.strided_slice(select_bbox_indices, begin=slice_begin, end=valid_outputs, strides=slice_strides, begin_mask=[], end_mask=[], name='strideslice_select_bbox_indices') #Unsupported dynamic ops
         select_scores = ng.strided_slice(select_scores, begin=slice_begin, end=valid_outputs, strides=slice_strides, begin_mask=[], end_mask=[], name='strideslice_select_scores') #Unsupported dynamic ops
         return [select_bbox_indices, select_scores, valid_outputs]
-        '''    
+        ''' 
+
+        # TODO case 9
+        # Nothing detected. Early drop
+        # How to handle If branch with ngraph Op?  
 
         # Phase 1: 
         # eliminate background class
@@ -114,6 +118,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                     
             node_background = ng.constant(np.array([background]), dtype=np.float, name='node_background')
             notequal_background = ng.not_equal(select_class_id, node_background, name='notequal_background')
+            notequal_background = ng.convert(notequal_background, destination_type="i32", name='notequal_background_int32')
 
             if hack_nonzero is not None:
                 notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
@@ -132,7 +137,6 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
             else:
                 # do
             '''
-
             nonzero = ng.non_zero(notequal_background, output_type="i32", name='nonzero_background')  # shape (1, S1) #Unsupported dynamic ops            
 
             # non-background's
@@ -167,6 +171,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
                 const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
                 equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
+                equal_imageid = ng.convert(equal_imageid, destination_type=np.int32)
                 
                 if hack_nonzero is not None:
                     equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32, name='equal_imageid') #HARDCODE                    
