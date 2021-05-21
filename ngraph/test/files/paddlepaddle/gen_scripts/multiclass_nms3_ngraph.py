@@ -118,7 +118,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
                     
             node_background = ng.constant(np.array([background]), dtype=np.float, name='node_background')
             notequal_background = ng.not_equal(select_class_id, node_background, name='notequal_background')
-            notequal_background = ng.convert(notequal_background, destination_type="i32", name='notequal_background_int32')
+            notequal_background = ng.convert_like(notequal_background, const_values[1]) #convert failed...not know why
 
             if hack_nonzero is not None:
                 notequal_background = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.float) #HARDCODE
@@ -171,7 +171,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
 
                 const_imageid = ng.constant(np.array([i]), dtype=np.float, name='const_image_id'+str(i))
                 equal_imageid = ng.equal(squeezed_image_id, const_imageid, name='equal_imageid')
-                equal_imageid = ng.convert(equal_imageid, destination_type=np.int32)
+                equal_imageid = ng.convert_like(equal_imageid, const_values[1])
                 
                 if hack_nonzero is not None:
                     equal_imageid = ng.constant(hack_nonzero[hack_nonzero_idx], dtype=np.int32, name='equal_imageid') #HARDCODE                    
