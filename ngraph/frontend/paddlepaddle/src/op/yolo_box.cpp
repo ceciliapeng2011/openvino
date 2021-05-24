@@ -14,6 +14,10 @@ namespace op {
     using namespace opset6;
     using namespace element;
 
+    // reference
+    // Paddle/python/paddle/fluid/tests/unittests/test_yolo_box_op.py
+    // Paddle/paddle/fluid/operators/detection/yolo_box_op.h
+    // Paddle2ONNX/paddle2onnx/op_mapper/detection/yolo_box.py - clip_bbox is not used by Paddle2ONNX.
 NamedOutputs yolo_box (const NodeContext& node_context) {
     auto data = node_context.get_ng_input("X");
     auto image_size = node_context.get_ng_input("ImgSize");
@@ -24,15 +28,16 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto indices_height = Constant::create<int32_t>(i64, {1}, {2});
     auto indices_width = Constant::create<int64_t>(i64, {1}, {3});
     auto const_axis0 = Constant::create<int64_t>(i64, {1}, {0});
-    auto input_height = std::make_shared<Gather>(input_shape, indices_height, const_axis0); // input_shape[2]
-    auto input_width = std::make_shared<Gather>(input_shape, indices_width, const_axis0); // input_shape[3]
-    auto node_batch_size = std::make_shared<Gather>(input_shape, indices_batchsize, const_axis0); // input_shape[0]
+    auto input_height = std::make_shared<Gather>(input_shape, indices_height, const_axis0); // H
+    auto input_width = std::make_shared<Gather>(input_shape, indices_width, const_axis0); // W
+    auto batch_size = std::make_shared<Gather>(input_shape, indices_batchsize, const_axis0); // N
 
     int32_t class_num = node_context.get_attribute<int32_t>("class_num");
+    auto const_class_num = Constant::create<int64_t>(i64, {1}, {class_num});
+    
     // PDPD anchors attribute is of type int32. Convert to float for computing convinient.
     auto _anchors = node_context.get_attribute<std::vector<int32_t>>("anchors");
     std::vector<float> anchors(_anchors.begin(), _anchors.end());
-
     uint32_t num_anchors = anchors.size()/2;
     auto const_num_anchors = Constant::create<int64_t>(i64, {1}, {num_anchors});
 
@@ -44,25 +49,24 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto scaled_input_height = std::make_shared<Multiply>(input_height, const_downsample_ratio);
     auto scaled_input_width = std::make_shared<Multiply>(input_width, const_downsample_ratio);    
 
-    // score_shape {batch_size, input_height * input_width * num_anchors, class_num}
-    auto const_class_num = Constant::create<int64_t>(i64, {1}, {class_num});
+    // score_shape {batch_size, input_height * input_width * num_anchors, class_num}    
     auto node_mul_whc = std::make_shared<Multiply>(input_height, input_width);
     node_mul_whc = std::make_shared<Multiply>(node_mul_whc, const_num_anchors);
-    auto score_shape = std::make_shared<Concat>(NodeVector{node_batch_size, node_mul_whc, const_class_num}, 0);
+    auto score_shape = std::make_shared<Concat>(NodeVector{batch_size, node_mul_whc, const_class_num}, 0);
     
     auto conf_thresh = node_context.get_attribute<float>("conf_thresh");
     auto const_conf_thresh = Constant::create<float>(f32, {1}, {conf_thresh});
 
+    auto clip_bbox = node_context.get_attribute<bool>("clip_bbox"); 
+
     std::cout << "num_anchors: " << num_anchors << " scale_x_y: " << scale_x_y << std::endl;
     std::cout << "downsample_ratio: " << downsample_ratio << " conf_thresh: " << conf_thresh << std::endl;
-    std::cout << "class_num:  " << class_num << " image_size: " << image_size << std::endl;
-
-    auto clip_bbox = node_context.get_attribute<bool>("clip_bbox"); 
+    std::cout << "class_num:  " << class_num << " image_size: " << image_size << std::endl;    
 
     // main X    
     // node_x_shape {batch_size, num_anchors, 5 + class_num, input_height, input_width}
     auto const_class_num_plus5 = Constant::create<int64_t>(i64, {1}, {5 + class_num});
-    auto node_x_shape = std::make_shared<Concat>(NodeVector{node_batch_size, const_num_anchors, const_class_num_plus5, input_height, input_width}, 0);
+    auto node_x_shape = std::make_shared<Concat>(NodeVector{batch_size, const_num_anchors, const_class_num_plus5, input_height, input_width}, 0);
 
     auto node_x_reshape = std::make_shared<Reshape>(data, node_x_shape, false);
 
@@ -135,7 +139,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_box_y_encode = std::make_shared<Divide>(node_box_y_add_grid, node_input_h); 
 
     // w/h
-    auto node_anchor_tensor = Constant::create<float>(f32, {num_anchors, 2}, anchors); //FIXME:Paddle2ONNX use float! 
+    auto node_anchor_tensor = Constant::create<float>(f32, {num_anchors, 2}, anchors);
     auto split_axis = Constant::create<int64_t>(i64, {}, {1});
     auto node_anchor_split = std::make_shared<Split>(node_anchor_tensor, split_axis, 2);
 
@@ -169,7 +173,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
 
     auto node_conf_sub = std::make_shared<Subtract>(node_conf_sigmoid, node_conf_thresh);
 
-    auto node_conf_clip = std::make_shared<Clamp>(node_conf_sub, 0.0f, std::numeric_limits<float>::max()); //FIXME: PDPD not specify min/max
+    auto node_conf_clip = std::make_shared<Clamp>(node_conf_sub, 0.0f, std::numeric_limits<float>::max());
 
     auto node_zeros = Constant::create<float>(f32, {1}, {0});
     auto node_conf_clip_bool = std::make_shared<Greater>(node_conf_clip, node_zeros);
@@ -181,7 +185,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     /* probability */
     auto node_prob_sigmoid = std::make_shared<Sigmoid>(node_prob);
 
-    auto node_new_shape = std::make_shared<Concat>(NodeVector{node_batch_size, const_num_anchors, input_height, input_width, Constant::create<int64_t>(i64, {1}, {1})}, 0);    
+    auto node_new_shape = std::make_shared<Concat>(NodeVector{batch_size, const_num_anchors, input_height, input_width, Constant::create<int64_t>(i64, {1}, {1})}, 0);    
     auto node_conf_new_shape = std::make_shared<Reshape>(node_conf_set_zero, node_new_shape, false); // {batch_size, int(num_anchors), input_height, input_width, 1}
 
     // broadcast confidence * probability of each category
@@ -197,11 +201,11 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_pred_box = std::make_shared<Concat>(OutputVector{node_box_x_new_shape, node_box_y_new_shape, 
                 node_box_w_new_shape, node_box_h_new_shape}, 4);
 
-    auto node_conf_cast = std::make_shared<Convert>(node_conf_bool, f32); //FIMXE: to=1
+    auto node_conf_cast = std::make_shared<Convert>(node_conf_bool, f32);
 
     auto node_pred_box_mul_conf = std::make_shared<Multiply>(node_pred_box, node_conf_cast);
 
-    auto node_box_shape = std::make_shared<Concat>(NodeVector{node_batch_size, node_mul_whc, Constant::create<int64_t>(i64, {1}, {4})}, 0);
+    auto node_box_shape = std::make_shared<Concat>(NodeVector{batch_size, node_mul_whc, Constant::create<int64_t>(i64, {1}, {4})}, 0);
     auto node_pred_box_new_shape = std::make_shared<Reshape>(node_pred_box_mul_conf, node_box_shape, false); // {batch_size, int(num_anchors) * input_height * input_width, 4}
 
     auto pred_box_split_axis = Constant::create<int32_t>(i64, {}, {2});
@@ -244,10 +248,6 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_pred_box_x2_squeeze = std::make_shared<Multiply>(node_pred_box_x2_reshape, node_img_width_cast);
     auto node_pred_box_y2_squeeze = std::make_shared<Multiply>(node_pred_box_y2_reshape, node_img_height_cast);  
 
-    // reference
-    // Paddle/python/paddle/fluid/tests/unittests/test_yolo_box_op.py
-    // Paddle/paddle/fluid/operators/detection/yolo_box_op.h
-    // Paddle2ONNX/paddle2onnx/op_mapper/detection/yolo_box.py - clip_bbox is not used by Paddle2ONNX.
     std::shared_ptr<ngraph::Node> node_pred_box_result;
     if (clip_bbox) {
         auto node_number_one = Constant::create<float>(f32, {1}, {1.0});
@@ -290,7 +290,6 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     outputs["Boxes"] = {node_pred_box_result};
     outputs["Scores"] = {node_score_new_shape};
     return outputs;
-
 }
 
 }}}}
