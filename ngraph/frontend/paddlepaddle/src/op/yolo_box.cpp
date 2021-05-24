@@ -38,11 +38,11 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
 
     auto default_scale = 1.0f;
     auto scale_x_y = node_context.get_attribute<float>("scale_x_y", default_scale);
+    
     auto downsample_ratio = node_context.get_attribute<int32_t>("downsample_ratio");
-
     auto const_downsample_ratio = Constant::create<int64_t>(i64, {1}, {downsample_ratio});
-    auto input_size = std::make_shared<Multiply>(input_height, const_downsample_ratio); // input_size = input_height * downsample_ratio
-    input_size->set_friendly_name("multiply/input_size");
+    auto scaled_input_height = std::make_shared<Multiply>(input_height, const_downsample_ratio);
+    auto scaled_input_width = std::make_shared<Multiply>(input_width, const_downsample_ratio);    
 
     // score_shape {batch_size, input_height * input_width * num_anchors, class_num}
     auto const_class_num = Constant::create<int64_t>(i64, {1}, {class_num});
@@ -95,7 +95,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_split_lengths = Constant::create<int64_t>(i64, {6}, {1, 1, 1, 1, 1, class_num});
     auto node_split_input = std::make_shared<VariadicSplit>(node_x_transpose, node_split_axis, node_split_lengths);
 
-    auto node_box_x = node_split_input->output(0);
+    auto node_box_x = node_split_input->output(0);  // shape (batch_size, num_anchors, H, W, 1)
     auto node_box_y = node_split_input->output(1);
     auto node_box_w = node_split_input->output(2);
     auto node_box_h = node_split_input->output(3);
@@ -113,7 +113,6 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
         auto bias_x_y_node = Constant::create<float>(f32, {1}, {bias_x_y});
 
         node_box_x_sigmoid = std::make_shared<Multiply>(node_box_x_sigmoid, scale_x_y_node);
-        node_box_x_sigmoid->set_friendly_name("multiply/node_mul_whc2");
         node_box_x_sigmoid = std::make_shared<Add>(node_box_x_sigmoid, bias_x_y_node);
         
         node_box_y_sigmoid = std::make_shared<Multiply>(node_box_y_sigmoid, scale_x_y_node);
@@ -136,16 +135,17 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_box_y_encode = std::make_shared<Divide>(node_box_y_add_grid, node_input_h); 
 
     // w/h
-    auto node_anchor_tensor = Constant::create<float>(f32, {num_anchors, 2}, anchors); //FIXME:Paddle2ONNX use float!
-
-    auto node_input_size = std::make_shared<Convert>(input_size, element::f32);
-    auto node_anchors_div_input_size = std::make_shared<Divide>(node_anchor_tensor, node_input_size);    
-  
+    auto node_anchor_tensor = Constant::create<float>(f32, {num_anchors, 2}, anchors); //FIXME:Paddle2ONNX use float! 
     auto split_axis = Constant::create<int64_t>(i64, {}, {1});
-    auto node_anchor_split = std::make_shared<Split>(node_anchors_div_input_size, split_axis, 2);
+    auto node_anchor_split = std::make_shared<Split>(node_anchor_tensor, split_axis, 2);
 
-    auto node_anchor_w = node_anchor_split->output(0);
-    auto node_anchor_h = node_anchor_split->output(1);
+    auto node_anchor_w_origin = node_anchor_split->output(0);
+    auto node_anchor_h_origin = node_anchor_split->output(1);
+
+    auto float_input_height = std::make_shared<Convert>(scaled_input_height, element::f32);
+    auto node_anchor_h = std::make_shared<Divide>(node_anchor_h_origin, float_input_height);
+    auto float_input_width = std::make_shared<Convert>(scaled_input_width, element::f32);
+    auto node_anchor_w = std::make_shared<Divide>(node_anchor_w_origin, float_input_width);         
 
     auto node_new_anchor_shape = Constant::create<int64_t>(i64, {4}, {1, num_anchors, 1, 1});
     auto node_anchor_w_reshape = std::make_shared<Reshape>(node_anchor_w, node_new_anchor_shape, false);
@@ -223,15 +223,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_pred_box_x2 = std::make_shared<Add>(node_pred_box_x, node_half_w);
     auto node_pred_box_y2 = std::make_shared<Add>(node_pred_box_y, node_half_h); 
 
-    /* map normalized coords to original image */
-    //auto squeeze_image_size_axes = Constant::create<int64_t>(i64, {1}, {0});
-    //auto node_sqeeze_image_size = std::make_shared<Squeeze>(image_size, squeeze_image_size_axes); // input ImgSize
-
-    //auto image_size_split_axis = Constant::create<int64_t>(i64, {}, {-1});
-    //auto node_image_size_split = std::make_shared<Split>(node_sqeeze_image_size, image_size_split_axis, 2);
-    //auto node_img_height =  node_image_size_split->output(0);
-    //auto node_img_width =  node_image_size_split->output(1);
-      
+    /* map normalized coords to original image */     
     auto indices_height_imgsize = Constant::create<int32_t>(i64, {1}, {0});
     auto indices_width_imgsize = Constant::create<int64_t>(i64, {1}, {1});
     auto const_axis1 = Constant::create<int64_t>(i64, {1}, {1});
