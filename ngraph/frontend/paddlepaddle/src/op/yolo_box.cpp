@@ -20,11 +20,13 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
 
     // get shape of X    
     auto input_shape = std::make_shared<ShapeOf>(data, i64);
+    auto indices_batchsize = Constant::create<int32_t>(i64, {1}, {0});
     auto indices_height = Constant::create<int32_t>(i64, {1}, {2});
     auto indices_width = Constant::create<int64_t>(i64, {1}, {3});
     auto const_axis0 = Constant::create<int64_t>(i64, {1}, {0});
     auto input_height = std::make_shared<Gather>(input_shape, indices_height, const_axis0); // input_shape[2]
     auto input_width = std::make_shared<Gather>(input_shape, indices_width, const_axis0); // input_shape[3]
+    auto node_batch_size = std::make_shared<Gather>(input_shape, indices_batchsize, const_axis0); // input_shape[0]
 
     int32_t class_num = node_context.get_attribute<int32_t>("class_num");
     // PDPD anchors attribute is of type int32. Convert to float for computing convinient.
@@ -42,11 +44,11 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto input_size = std::make_shared<Multiply>(input_height, const_downsample_ratio); // input_size = input_height * downsample_ratio
     input_size->set_friendly_name("multiply/input_size");
 
-    // score_shape {1, input_height * input_width * num_anchors, class_num}
+    // score_shape {batch_size, input_height * input_width * num_anchors, class_num}
     auto const_class_num = Constant::create<int64_t>(i64, {1}, {class_num});
     auto node_mul_whc = std::make_shared<Multiply>(input_height, input_width);
     node_mul_whc = std::make_shared<Multiply>(node_mul_whc, const_num_anchors);
-    auto score_shape = std::make_shared<Concat>(NodeVector{Constant::create<int64_t>(i64, {1}, {1}), node_mul_whc, const_class_num}, 0);
+    auto score_shape = std::make_shared<Concat>(NodeVector{node_batch_size, node_mul_whc, const_class_num}, 0);
     
     auto conf_thresh = node_context.get_attribute<float>("conf_thresh");
     auto const_conf_thresh = Constant::create<float>(f32, {1}, {conf_thresh});
@@ -57,10 +59,10 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
 
     auto clip_bbox = node_context.get_attribute<bool>("clip_bbox"); 
 
-    // main X
-    // node_x_shape {1, num_anchors, 5 + class_num, input_height, input_width}
+    // main X    
+    // node_x_shape {batch_size, num_anchors, 5 + class_num, input_height, input_width}
     auto const_class_num_plus5 = Constant::create<int64_t>(i64, {1}, {5 + class_num});
-    auto node_x_shape = std::make_shared<Concat>(NodeVector{Constant::create<int64_t>(i64, {1}, {1}), const_num_anchors, const_class_num_plus5, input_height, input_width}, 0);
+    auto node_x_shape = std::make_shared<Concat>(NodeVector{node_batch_size, const_num_anchors, const_class_num_plus5, input_height, input_width}, 0);
 
     auto node_x_reshape = std::make_shared<Reshape>(data, node_x_shape, false);
 
@@ -85,7 +87,7 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_range_x_shape = std::make_shared<Concat>(NodeVector{Constant::create<int64_t>(i64, {1}, {1}), input_width}, 0); 
     auto node_range_y_shape = std::make_shared<Concat>(NodeVector{input_height, Constant::create<int64_t>(i64, {1}, {1})}, 0);   
                                                  
-    auto node_grid_x = std::make_shared<Tile>(node_range_x, node_range_y_shape);
+    auto node_grid_x = std::make_shared<Tile>(node_range_x, node_range_y_shape); // shape (H, W)
     auto node_grid_y = std::make_shared<Tile>(node_range_y, node_range_x_shape);
 
     // main X (part2)
@@ -179,8 +181,8 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     /* probability */
     auto node_prob_sigmoid = std::make_shared<Sigmoid>(node_prob);
 
-    auto node_new_shape = std::make_shared<Concat>(NodeVector{Constant::create<int64_t>(i64, {1}, {1}), const_num_anchors, input_height, input_width, Constant::create<int64_t>(i64, {1}, {1})}, 0);    
-    auto node_conf_new_shape = std::make_shared<Reshape>(node_conf_set_zero, node_new_shape, false); // {1, int(num_anchors), input_height, input_width, 1}
+    auto node_new_shape = std::make_shared<Concat>(NodeVector{node_batch_size, const_num_anchors, input_height, input_width, Constant::create<int64_t>(i64, {1}, {1})}, 0);    
+    auto node_conf_new_shape = std::make_shared<Reshape>(node_conf_set_zero, node_new_shape, false); // {batch_size, int(num_anchors), input_height, input_width, 1}
 
     // broadcast confidence * probability of each category
     auto node_score = std::make_shared<Multiply>(node_prob_sigmoid, node_conf_new_shape);
@@ -199,8 +201,8 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
 
     auto node_pred_box_mul_conf = std::make_shared<Multiply>(node_pred_box, node_conf_cast);
 
-    auto node_box_shape = std::make_shared<Concat>(NodeVector{Constant::create<int64_t>(i64, {1}, {1}), node_mul_whc, Constant::create<int64_t>(i64, {1}, {4})}, 0);
-    auto node_pred_box_new_shape = std::make_shared<Reshape>(node_pred_box_mul_conf, node_box_shape, false); // {1, int(num_anchors) * input_height * input_width, 4}
+    auto node_box_shape = std::make_shared<Concat>(NodeVector{node_batch_size, node_mul_whc, Constant::create<int64_t>(i64, {1}, {4})}, 0);
+    auto node_pred_box_new_shape = std::make_shared<Reshape>(node_pred_box_mul_conf, node_box_shape, false); // {batch_size, int(num_anchors) * input_height * input_width, 4}
 
     auto pred_box_split_axis = Constant::create<int32_t>(i64, {}, {2});
     auto node_pred_box_split = std::make_shared<Split>(node_pred_box_new_shape, pred_box_split_axis, 4);
@@ -219,24 +221,36 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
     auto node_pred_box_y1 = std::make_shared<Subtract>(node_pred_box_y, node_half_h);
 
     auto node_pred_box_x2 = std::make_shared<Add>(node_pred_box_x, node_half_w);
-    auto node_pred_box_y2 = std::make_shared<Add>(node_pred_box_y, node_half_h);
+    auto node_pred_box_y2 = std::make_shared<Add>(node_pred_box_y, node_half_h); 
 
     /* map normalized coords to original image */
-    auto squeeze_image_size_axes = Constant::create<int64_t>(i64, {1}, {0});
-    auto node_sqeeze_image_size = std::make_shared<Squeeze>(image_size, squeeze_image_size_axes); // input ImgSize
+    //auto squeeze_image_size_axes = Constant::create<int64_t>(i64, {1}, {0});
+    //auto node_sqeeze_image_size = std::make_shared<Squeeze>(image_size, squeeze_image_size_axes); // input ImgSize
 
-    auto image_size_split_axis = Constant::create<int64_t>(i64, {}, {-1});
-    auto node_image_size_split = std::make_shared<Split>(node_sqeeze_image_size, image_size_split_axis, 2);
-    auto node_img_height =  node_image_size_split->output(0);
-    auto node_img_width =  node_image_size_split->output(1);
+    //auto image_size_split_axis = Constant::create<int64_t>(i64, {}, {-1});
+    //auto node_image_size_split = std::make_shared<Split>(node_sqeeze_image_size, image_size_split_axis, 2);
+    //auto node_img_height =  node_image_size_split->output(0);
+    //auto node_img_width =  node_image_size_split->output(1);
+      
+    auto indices_height_imgsize = Constant::create<int32_t>(i64, {1}, {0});
+    auto indices_width_imgsize = Constant::create<int64_t>(i64, {1}, {1});
+    auto const_axis1 = Constant::create<int64_t>(i64, {1}, {1});
+    auto node_img_height = std::make_shared<Gather>(image_size, indices_height_imgsize, const_axis1); // shape_image_size[0]
+    auto node_img_width = std::make_shared<Gather>(image_size, indices_width_imgsize, const_axis1); // shape_image_size[1]    
 
     auto node_img_width_cast = std::make_shared<Convert>(node_img_width, f32);
     auto node_img_height_cast = std::make_shared<Convert>(node_img_height, f32);
 
-    auto node_pred_box_x1_decode = std::make_shared<Multiply>(node_pred_box_x1, node_img_width_cast);
-    auto node_pred_box_y1_decode = std::make_shared<Multiply>(node_pred_box_y1, node_img_height_cast);
-    auto node_pred_box_x2_decode = std::make_shared<Multiply>(node_pred_box_x2, node_img_width_cast);
-    auto node_pred_box_y2_decode = std::make_shared<Multiply>(node_pred_box_y2, node_img_height_cast);
+    auto squeeze_axes2 = Constant::create<int64_t>(i64, {1}, {2});
+    auto node_pred_box_x1_reshape = std::make_shared<Squeeze>(node_pred_box_x1, squeeze_axes2); //shape (N,C,1) -> (N,C) for upcomping multiply.
+    auto node_pred_box_y1_reshape = std::make_shared<Squeeze>(node_pred_box_y1, squeeze_axes2);
+    auto node_pred_box_x2_reshape = std::make_shared<Squeeze>(node_pred_box_x2, squeeze_axes2);
+    auto node_pred_box_y2_reshape = std::make_shared<Squeeze>(node_pred_box_y2, squeeze_axes2);
+
+    auto node_pred_box_x1_squeeze = std::make_shared<Multiply>(node_pred_box_x1_reshape, node_img_width_cast);
+    auto node_pred_box_y1_squeeze = std::make_shared<Multiply>(node_pred_box_y1_reshape, node_img_height_cast);
+    auto node_pred_box_x2_squeeze = std::make_shared<Multiply>(node_pred_box_x2_reshape, node_img_width_cast);
+    auto node_pred_box_y2_squeeze = std::make_shared<Multiply>(node_pred_box_y2_reshape, node_img_height_cast);  
 
     // reference
     // Paddle/python/paddle/fluid/tests/unittests/test_yolo_box_op.py
@@ -247,22 +261,32 @@ NamedOutputs yolo_box (const NodeContext& node_context) {
         auto node_number_one = Constant::create<float>(f32, {1}, {1.0});
         auto node_new_img_height = std::make_shared<Subtract>(node_img_height_cast, node_number_one);
         auto node_new_img_width = std::make_shared<Subtract>(node_img_width_cast, node_number_one);
-        auto node_pred_box_x2_sub_w = std::make_shared<Subtract>(node_pred_box_x2_decode, node_new_img_width); //x2 - (w-1)
-        auto node_pred_box_y2_sub_h = std::make_shared<Subtract>(node_pred_box_y2_decode, node_new_img_height); //y2 - (h-1)
+        auto node_pred_box_x2_sub_w = std::make_shared<Subtract>(node_pred_box_x2_squeeze, node_new_img_width); //x2 - (w-1)
+        auto node_pred_box_y2_sub_h = std::make_shared<Subtract>(node_pred_box_y2_squeeze, node_new_img_height); //y2 - (h-1)
 
         auto max_const = std::numeric_limits<float>::max();
-        auto node_pred_box_x1_clip = std::make_shared<Clamp>(node_pred_box_x1_decode, 0.0f, max_const);
-        auto node_pred_box_y1_clip = std::make_shared<Clamp>(node_pred_box_y1_decode, 0.0f, max_const);
+        auto node_pred_box_x1_clip = std::make_shared<Clamp>(node_pred_box_x1_squeeze, 0.0f, max_const);
+        auto node_pred_box_y1_clip = std::make_shared<Clamp>(node_pred_box_y1_squeeze, 0.0f, max_const);
         auto node_pred_box_x2_clip = std::make_shared<Clamp>(node_pred_box_x2_sub_w, 0.0f, max_const);
-        auto node_pred_box_y2_clip = std::make_shared<Clamp>(node_pred_box_y2_sub_h, 0.0f, max_const);
+        auto node_pred_box_y2_clip = std::make_shared<Clamp>(node_pred_box_y2_sub_h, 0.0f, max_const);   
 
-        auto node_pred_box_x2_res = std::make_shared<Subtract>(node_pred_box_x2_decode, node_pred_box_x2_clip);
-        auto node_pred_box_y2_res = std::make_shared<Subtract>(node_pred_box_y2_decode, node_pred_box_y2_clip);
+        auto node_pred_box_x2_res = std::make_shared<Subtract>(node_pred_box_x2_squeeze, node_pred_box_x2_clip);
+        auto node_pred_box_y2_res = std::make_shared<Subtract>(node_pred_box_y2_squeeze, node_pred_box_y2_clip);
 
-        node_pred_box_result = std::make_shared<Concat>(OutputVector{node_pred_box_x1_clip, node_pred_box_y1_clip,
-                    node_pred_box_x2_res, node_pred_box_y2_res}, -1); //outputs=node.output('Boxes') 
+        auto node_pred_box_x1_clip2 = std::make_shared<Unsqueeze>(node_pred_box_x1_clip, squeeze_axes2); // reshape back to (N,C,1)
+        auto node_pred_box_y1_clip2 = std::make_shared<Unsqueeze>(node_pred_box_y1_clip, squeeze_axes2);
+        auto node_pred_box_x2_res2 = std::make_shared<Unsqueeze>(node_pred_box_x2_res, squeeze_axes2);
+        auto node_pred_box_y2_res2 = std::make_shared<Unsqueeze>(node_pred_box_y2_res, squeeze_axes2);            
+
+        node_pred_box_result = std::make_shared<Concat>(OutputVector{node_pred_box_x1_clip2, node_pred_box_y1_clip2,
+                    node_pred_box_x2_res2, node_pred_box_y2_res2}, -1); //outputs=node.output('Boxes') 
     }
     else {
+        auto node_pred_box_x1_decode = std::make_shared<Unsqueeze>(node_pred_box_x1_squeeze, squeeze_axes2); // reshape back to (N,C,1)
+        auto node_pred_box_y1_decode = std::make_shared<Unsqueeze>(node_pred_box_y1_squeeze, squeeze_axes2);
+        auto node_pred_box_x2_decode = std::make_shared<Unsqueeze>(node_pred_box_x2_squeeze, squeeze_axes2);
+        auto node_pred_box_y2_decode = std::make_shared<Unsqueeze>(node_pred_box_y2_squeeze, squeeze_axes2); 
+
         node_pred_box_result = std::make_shared<Concat>(OutputVector{node_pred_box_x1_decode, node_pred_box_y1_decode,
                     node_pred_box_x2_decode, node_pred_box_y2_decode}, -1); //outputs=node.output('Boxes')          
     }
