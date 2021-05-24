@@ -314,7 +314,7 @@ def ngraph_multiclass_nms3(input_boxes, input_scores, pdpd_attrs, hack_nonzero=N
     
     for key, value in output.items():
         print("# Ngraph result:\n", key, value.shape, value.dtype)
-        from generate_multiclass_nms import print_2Dlike
+        from compare_tool import print_2Dlike
         print_2Dlike(value, "ie_{}".format(key)) 
 
     return output #dict
