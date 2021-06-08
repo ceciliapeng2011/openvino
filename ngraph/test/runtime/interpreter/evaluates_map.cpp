@@ -1089,6 +1089,16 @@ namespace
         std::vector<float> selected_scores(info.out_shape_size);
         int64_t valid_outputs = 0;
 
+        std::cout << "boxes: { ";
+        for(auto &v : info.boxes_data)
+            std::cout<< v << ", ";
+        std::cout<< "}" << std::endl;
+
+        std::cout << "scores: { ";
+        for(auto &v : info.scores_data)
+            std::cout<< v << ", ";
+        std::cout<< "}" << std::endl; 
+
         runtime::reference::multiclass_nms(info.boxes_data.data(),
                                                 info.boxes_shape,
                                                 info.scores_data.data(),
@@ -1103,6 +1113,20 @@ namespace
                                                 info.out_shape,
                                                 &valid_outputs,
                                                 info.sort_result_descending);
+
+    std::cout << "selected_indices: { ";
+    for(auto &v : selected_indices)
+        std::cout<< v << ", ";
+    std::cout<< "}" << std::endl;
+
+    std::cout << "selected_scores: { ";
+    for(auto &v : selected_scores)
+        std::cout<< v << ", ";
+    std::cout<< "}" << std::endl;  
+
+    std::cout << "valid_outputs: { ";
+    std::cout<< valid_outputs << ", ";
+    std::cout<< "}" << std::endl;                                                    
 
         auto selected_scores_type =
             (inputs.size() < 4) ? element::f32 : inputs[3]->get_element_type();
