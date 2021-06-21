@@ -26,6 +26,7 @@
 #include "op/logical_not.hpp"
 #include "op/matmul.hpp"
 #include "op/mul.hpp"
+#include "op/multiclass_nms.hpp"
 #include "op/pad3d.hpp"
 #include "op/pool2d.hpp"
 #include "op/pow.hpp"
@@ -90,6 +91,7 @@ namespace ngraph
                         {"matmul", op::matmul},
                         {"max_pool2d_with_index", op::pool2d},
                         {"mul", op::mul},
+                        {"multiclass_nms3", op::multiclass_nms},
                         {"nearest_interp_v2", op::nearest_interp_v2},
                         {"nearest_interp", op::nearest_interp_v2},
                         {"pad3d", op::pad3d},
