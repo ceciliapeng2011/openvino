@@ -70,17 +70,24 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
                                     keep_top_k=attrs['keep_top_k'],
                                     normalized=attrs['normalized'],
                                     nms_eta=attrs['nms_eta'],
-                                    return_index=True)
+                                    return_index=attrs['return_index'])
 
         cpu = pdpd.static.cpu_places(1)
         exe = pdpd.static.Executor(cpu[0])
         # startup program will call initializer to initialize the parameters.
         exe.run(pdpd.static.default_startup_program())
 
-        out_np, nms_rois_num_np, index_np = exe.run(
-            feed={'bboxes': bboxes, 'scores': scores},
-            fetch_list=output,
-            return_numpy=False)
+        if attrs['return_index'] is True:
+            out_np, nms_rois_num_np, index_np = exe.run(
+                feed={'bboxes': bboxes, 'scores': scores},
+                fetch_list=output,
+                return_numpy=False)
+        else:
+            out_np, nms_rois_num_np = exe.run(
+                feed={'bboxes': bboxes, 'scores': scores},
+                fetch_list=output[:2],
+                return_numpy=False)
+            index_np = []
 
         out = np.array(out_np)
         index = np.array(index_np)
@@ -91,11 +98,12 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
         saveModel(name,
                   exe,
                   feedkeys=['bboxes', 'scores'],
-                  fetchlist=output,
+                  fetchlist=output if attrs['return_index'] is True else output[:2],
                   inputs=[bboxes, scores],
-                  outputs=[out, index, nms_rois_num],
+                  outputs=[out, nms_rois_num, index] if attrs['return_index'] is True else [
+                      out, nms_rois_num],
                   target_dir=sys.argv[1])
-    """     
+
     # input
     print('\033[94m' + 'bboxes: {}'.format(bboxes.shape) + '\033[0m')
     print_alike(bboxes, seperator_begin='', seperator_end='')
@@ -109,14 +117,13 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
     print_alike(index, seperator_begin='', seperator_end='')
     print('\033[91m' + 'nms_rois_num_np: {}'.format(nms_rois_num.shape) +
           '\033[0m')
-    print_alike(nms_rois_num, seperator_begin='', seperator_end='') 
-    """
+    print_alike(nms_rois_num, seperator_begin='', seperator_end='')
 
     return [index, nms_rois_num, out]  # the same order of pred_ngraph dict
 
 
 def main():  # multiclass_nms
-    test_case = [None] * 10
+    test_case = [None] * 20
 
     # case  multiclass_nms_by_class_id
     test_case[0] = {  # N 1, C 2, M 6
@@ -138,7 +145,8 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
@@ -167,7 +175,8 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,  # the bigger, the more bbox kept.
             'keep_top_k': -1,  # -1, keep all
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
@@ -193,7 +202,8 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
@@ -216,7 +226,8 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
@@ -239,7 +250,8 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
@@ -256,12 +268,13 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
     # case  multiclass_nms_by_IOU
-    test_case[5] = {  # N 1, C 1, M 6
+    test_case[6] = {  # N 1, C 1, M 6
         'name':
         'multiclass_nms_by_IOU',
         'boxes':
@@ -279,12 +292,13 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
     # case  multiclass_nms_by_IOU_and_scores
-    test_case[5] = {  # N 1, C 1, M 6
+    test_case[7] = {  # N 1, C 1, M 6
         'name':
         'multiclass_nms_by_IOU_and_scores',
         'boxes':
@@ -297,17 +311,18 @@ def main():  # multiclass_nms
         'pdpd_attrs': {
             'nms_type': 'multiclass_nms3',  # PDPD Op type
             'background_label': -1,
-            'score_threshold': 0.95,
+            'score_threshold': 0.93,
             'nms_top_k': 3,
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
     # case multiclass_nms_by_background
-    test_case[6] = {  # N 2, C 2, M 3
+    test_case[8] = {  # N 2, C 2, M 3
         'name':
         'multiclass_nms_by_background',
         'boxes':
@@ -331,12 +346,13 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,  # the bigger, the more bbox kept.
             'keep_top_k': -1,  # -1, keep all
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
     # case multiclass_nms_by_keep_top_k
-    test_case[7] = {  # N 2, C 2, M 3
+    test_case[9] = {  # N 2, C 2, M 3
         'name':
         'multiclass_nms_by_keep_top_k',
         'boxes':
@@ -360,12 +376,13 @@ def main():  # multiclass_nms
             'nms_threshold': 0.5,  # the bigger, the more bbox kept.
             'keep_top_k': 3,  # -1, keep all
             'normalized': True,
-            'nms_eta': 1.0
+            'nms_eta': 1.0,
+            'return_index': True
         }
     }
 
     # case multiclass_nms_by_nms_eta
-    test_case[8] = {  # N 2, C 2, M 3
+    test_case[10] = {  # N 2, C 2, M 3
         'name':
         'multiclass_nms_by_nms_eta',
         'boxes':
@@ -389,19 +406,25 @@ def main():  # multiclass_nms
             'nms_threshold': 1.0,  # the bigger, the more bbox kept.
             'keep_top_k': -1,  # -1, keep all
             'normalized': True,
-            'nms_eta': 0.1
+            'nms_eta': 0.1,
+            'return_index': True
         }
     }
 
     # case multiclass_nms_not_normalized
-    test_case[9] = copy.deepcopy(test_case[1])
-    test_case[9]['name'] = 'multiclass_nms_not_normalized'
-    test_case[9]['pdpd_attrs']['normalized'] = False
+    test_case[11] = copy.deepcopy(test_case[1])
+    test_case[11]['name'] = 'multiclass_nms_not_normalized'
+    test_case[11]['pdpd_attrs']['normalized'] = False
+
+    # case multiclass_nms_not_return_indexed
+    test_case[12] = copy.deepcopy(test_case[1])
+    test_case[12]['name'] = 'multiclass_nms_not_return_indexed'
+    test_case[12]['pdpd_attrs']['return_index'] = False
 
     # bboxes shape (N, M, 4)
     # scores shape (N, C, M)
     for i, t in enumerate(test_case):
-        if t is not None:
+        if t is not None and i == 7:
             print('\033[95m' +
                   '\n\Generating multiclass_nms test case: {} {} ......'.format(i, t['name']) +
                   '\033[0m')
