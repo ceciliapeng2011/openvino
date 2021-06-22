@@ -17,13 +17,15 @@
 
 using namespace ngraph;
 using namespace InferenceEngine;
+using namespace ngraph::test;
 
 #include <cnpy.h>
 #include "../shared/include/basic_api.hpp"
 
 using namespace ngraph;
 using namespace ngraph::frontend;
-using TestEngine = test::IE_CPU_Engine;
+//using TestEngine = test::IE_CPU_Engine;
+using TestEngine = test::INTERPRETER_Engine;
 
 static const std::string PDPD = "pdpd";
 static const std::string PATH_TO_MODELS = "/paddlepaddle/models/";
@@ -104,7 +106,7 @@ namespace fuzzyOp
                                             std::string>; // modelname
     template <typename T>
     inline void add_input_output(cnpy::NpyArray& npy_array,
-                                 test::TestCase<TestEngine>& test_case,
+                                 test::TestCase<TestEngine, TestCaseType::DYNAMIC>& test_case,
                                  bool is_input = true)
     {
         T* npy_begin = npy_array.data<T>();
@@ -112,14 +114,16 @@ namespace fuzzyOp
         if (is_input)
             test_case.add_input(data);
         else
-            test_case.add_expected_output(data);
+            //test_case.add_expected_output(data);
+            test_case.add_expected_output<T>(npy_array.shape, data);
     }
     void run_fuzzy(std::shared_ptr<ngraph::Function> function, std::string& model_file)
     {
         auto model_folder = get_model_folder(model_file);
 
         // run test
-        auto test_case = test::TestCase<TestEngine>(function);
+        //auto test_case = test::TestCase<TestEngine>(function);
+        auto test_case = test::TestCase<TestEngine, TestCaseType::DYNAMIC>(function);
 
         const auto parameters = function->get_parameters();
         for (size_t i = 0; i < parameters.size(); i++)
@@ -177,7 +181,7 @@ namespace fuzzyOp
 
         if (use_float_test)
         {
-            test_case.run_with_tolerance_as_fp();
+            test_case.run();
         }
         else
         {

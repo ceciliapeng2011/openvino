@@ -30,26 +30,13 @@ namespace ngraph
                     auto background_class = node.get_attribute<int>("background_label");
                     auto nms_eta = node.get_attribute<float>("nms_eta");
 
-                    auto normalized = node.get_attribute<bool>("normalized");
+                    auto type_index = node.get_out_port_type("Index");
+                    auto type_num = node.get_out_port_type("NmsRoisNum");
+                    PDPD_ASSERT((type_index == i32 || type_index == i64) &&
+                                    (type_num == i32 || type_num == i64),
+                                "Unexpected data type of outputs of MulticlassNMS");
 
-                    if (!normalized)
-                    {
-                        auto node_value_one = Constant::create<float>(f32, {1}, {1.0});
-
-                        auto node_axis2 = Constant::create<int64_t>(i64, {}, {2});
-                        auto node_new_bboxes =
-                            std::make_shared<Split>(bboxes, node_axis2, 4)->outputs();
-                        auto node_new_xmax =
-                            std::make_shared<Add>(node_new_bboxes[2], node_value_one);
-                        auto node_new_ymax =
-                            std::make_shared<Add>(node_new_bboxes[3], node_value_one);
-
-                        bboxes = std::make_shared<Concat>(OutputVector{node_new_bboxes[0],
-                                                                       node_new_bboxes[1],
-                                                                       node_new_xmax,
-                                                                       node_new_ymax},
-                                                          2);
-                    }
+                    // auto normalized = node.get_attribute<bool>("normalized");
 
                     NamedOutputs named_outputs;
                     std::vector<Output<Node>> nms_outputs;
@@ -58,7 +45,7 @@ namespace ngraph
                                                         scores,
                                                         MulticlassNms::SortResultType::CLASSID,
                                                         false,
-                                                        i64, // TODO
+                                                        type_index,
                                                         iou_threshold,
                                                         score_threshold,
                                                         nms_top_k,
@@ -74,6 +61,14 @@ namespace ngraph
                     named_outputs["Out"] = {nms_outputs[0]};
                     named_outputs["Index"] = {nms_outputs[1]};
                     named_outputs["NmsRoisNum"] = {nms_outputs[2]};
+
+                    if (type_num != type_index)
+                    {
+                        // adapter
+                        auto node_convert = std::make_shared<Convert>(nms_outputs[2], type_num);
+                        named_outputs["NmsRoisNum"] = {node_convert};
+                    }
+
                     return named_outputs;
                 }
 
