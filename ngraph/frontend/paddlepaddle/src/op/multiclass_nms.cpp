@@ -32,35 +32,44 @@ namespace ngraph
 
                     auto normalized = node.get_attribute<bool>("normalized");
 
-                    if( !normalized )
+                    if (!normalized)
                     {
                         auto node_value_one = Constant::create<float>(f32, {1}, {1.0});
 
                         auto node_axis2 = Constant::create<int64_t>(i64, {}, {2});
-                        auto node_new_bboxes = std::make_shared<Split>(bboxes, node_axis2, 4)->outputs();
-                        auto node_new_xmax = std::make_shared<Add>(node_new_bboxes[2], node_value_one);
-                        auto node_new_ymax = std::make_shared<Add>(node_new_bboxes[3], node_value_one);
+                        auto node_new_bboxes =
+                            std::make_shared<Split>(bboxes, node_axis2, 4)->outputs();
+                        auto node_new_xmax =
+                            std::make_shared<Add>(node_new_bboxes[2], node_value_one);
+                        auto node_new_ymax =
+                            std::make_shared<Add>(node_new_bboxes[3], node_value_one);
 
-                        bboxes = std::make_shared<Concat>(OutputVector{node_new_bboxes[0], node_new_bboxes[1], node_new_xmax, node_new_ymax}, 2);
+                        bboxes = std::make_shared<Concat>(OutputVector{node_new_bboxes[0],
+                                                                       node_new_bboxes[1],
+                                                                       node_new_xmax,
+                                                                       node_new_ymax},
+                                                          2);
                     }
 
                     NamedOutputs named_outputs;
                     std::vector<Output<Node>> nms_outputs;
-                    nms_outputs = std::make_shared<MulticlassNms>(
-                            bboxes,
-                            scores,
-                            MulticlassNms::SortResultType::CLASSID,
-                            false,
-                            i64, // TODO
-                            iou_threshold,
-                            score_threshold,
-                            nms_top_k,
-                            keep_top_k,
-                            background_class,
-                            nms_eta)->outputs();
+                    nms_outputs =
+                        std::make_shared<MulticlassNms>(bboxes,
+                                                        scores,
+                                                        MulticlassNms::SortResultType::CLASSID,
+                                                        false,
+                                                        i64, // TODO
+                                                        iou_threshold,
+                                                        score_threshold,
+                                                        nms_top_k,
+                                                        keep_top_k,
+                                                        background_class,
+                                                        nms_eta)
+                            ->outputs();
 
                     auto out_names = node.get_output_names();
-                    PDPD_ASSERT(out_names.size() == 3, "Unexpected number of outputs of MulticlassNMS");
+                    PDPD_ASSERT(out_names.size() == 3,
+                                "Unexpected number of outputs of MulticlassNMS");
 
                     named_outputs["Out"] = {nms_outputs[0]};
                     named_outputs["Index"] = {nms_outputs[1]};
