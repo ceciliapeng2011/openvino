@@ -8,8 +8,10 @@ import sys
 
 from save_model import saveModel
 
-
 # print numpy array like vector array
+# this is to faciliate some unit test, e.g. ngraph op unit test.
+
+
 def print_alike(arr, seperator_begin='{', seperator_end='}'):
     shape = arr.shape
     rank = len(shape)
@@ -45,7 +47,7 @@ def print_alike(arr, seperator_begin='{', seperator_end='}'):
 
 # bboxes shape (N, M, 4)
 # scores shape (N, C, M)
-def multiclass_nms(name: str, bboxes, scores, attrs: dict):
+def multiclass_nms(name: str, bboxes, scores, attrs: dict, quite=True):
     import paddle as pdpd
     from ppdet.modeling import ops
     pdpd.enable_static()
@@ -77,6 +79,8 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
         # startup program will call initializer to initialize the parameters.
         exe.run(pdpd.static.default_startup_program())
 
+        index_np = None
+        index = None
         if attrs['return_index'] is True:
             out_np, nms_rois_num_np, index_np = exe.run(
                 feed={'bboxes': bboxes, 'scores': scores},
@@ -87,11 +91,16 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
                 feed={'bboxes': bboxes, 'scores': scores},
                 fetch_list=output[:2],
                 return_numpy=False)
-            index_np = []
 
+        # There is a bug in paddledet that dtype of model var mismatch its output LodTensor.
+        # Specifically, it is 'Index' is 'int64', while its LodTensor of 'int32'.
+        # This will lead to a failure in ngraph frontend op fuzzy test.
+        # So here is an workaround to align the dtypes.
         out = np.array(out_np)
-        index = np.array(index_np)
         nms_rois_num = np.array(nms_rois_num_np)
+        if index_np is not None:
+            index = np.array(index_np).astype(
+                pdpd.fluid.data_feeder.convert_dtype(output[2].dtype))
 
         # Save inputs in order of ngraph function, to facilite Fuzzy test,
         # which accepts inputs and outputs in this order as well.
@@ -104,22 +113,24 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict):
                       out, nms_rois_num],
                   target_dir=sys.argv[1])
 
-    # input
-    print('\033[94m' + 'bboxes: {}'.format(bboxes.shape) + '\033[0m')
-    print_alike(bboxes, seperator_begin='', seperator_end='')
-    print('\033[94m' + 'scores: {}'.format(scores.shape) + '\033[0m')
-    print_alike(scores, seperator_begin='', seperator_end='')
+    if quite is False:
+        # input
+        print('\033[94m' + 'bboxes: {}'.format(bboxes.shape) + '\033[0m')
+        print_alike(bboxes, seperator_begin='', seperator_end='')
+        print('\033[94m' + 'scores: {}'.format(scores.shape) + '\033[0m')
+        print_alike(scores, seperator_begin='', seperator_end='')
 
-    # output
-    print('\033[91m' + 'out_np: {}'.format(out.shape) + '\033[0m')
-    print_alike(out, seperator_begin='', seperator_end='')
-    print('\033[91m' + 'index_np: {}'.format(index.shape) + '\033[0m')
-    print_alike(index, seperator_begin='', seperator_end='')
-    print('\033[91m' + 'nms_rois_num_np: {}'.format(nms_rois_num.shape) +
-          '\033[0m')
-    print_alike(nms_rois_num, seperator_begin='', seperator_end='')
+        # output
+        print('\033[91m' + 'out_np: {}'.format(out.shape) + '\033[0m')
+        print_alike(out, seperator_begin='', seperator_end='')
+        print('\033[91m' + 'nms_rois_num_np: {}'.format(nms_rois_num.shape) +
+              '\033[0m')
+        print_alike(nms_rois_num, seperator_begin='', seperator_end='')
+        if index is not None:
+            print('\033[91m' + 'index_np: {}'.format(index.shape) + '\033[0m')
+            print_alike(index, seperator_begin='', seperator_end='')
 
-    return [index, nms_rois_num, out]  # the same order of pred_ngraph dict
+    return
 
 
 def main():  # multiclass_nms
@@ -424,7 +435,7 @@ def main():  # multiclass_nms
     # bboxes shape (N, M, 4)
     # scores shape (N, C, M)
     for i, t in enumerate(test_case):
-        if t is not None and i == 7:
+        if t is not None:
             print('\033[95m' +
                   '\n\Generating multiclass_nms test case: {} {} ......'.format(i, t['name']) +
                   '\033[0m')
