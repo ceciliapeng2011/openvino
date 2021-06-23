@@ -30,13 +30,17 @@ namespace ngraph
                     auto background_class = node.get_attribute<int>("background_label");
                     auto nms_eta = node.get_attribute<float>("nms_eta");
 
+                    auto out_names = node.get_output_names();
+                    PDPD_ASSERT(out_names.size() == 3,
+                                "Unexpected number of outputs of MulticlassNMS");
+
                     auto type_index = node.get_out_port_type("Index");
                     auto type_num = node.get_out_port_type("NmsRoisNum");
                     PDPD_ASSERT((type_index == i32 || type_index == i64) &&
                                     (type_num == i32 || type_num == i64),
-                                "Unexpected data type of outputs of MulticlassNMS");
+                                "Unexpected data type of outputs of MulticlassNMS: " + out_names.size());
 
-                    // auto normalized = node.get_attribute<bool>("normalized");
+                    auto normalized = node.get_attribute<bool>("normalized");
 
                     NamedOutputs named_outputs;
                     std::vector<Output<Node>> nms_outputs;
@@ -51,12 +55,9 @@ namespace ngraph
                                                         nms_top_k,
                                                         keep_top_k,
                                                         background_class,
-                                                        nms_eta)
+                                                        nms_eta,
+                                                        normalized)
                             ->outputs();
-
-                    auto out_names = node.get_output_names();
-                    PDPD_ASSERT(out_names.size() == 3,
-                                "Unexpected number of outputs of MulticlassNMS");
 
                     named_outputs["Out"] = {nms_outputs[0]};
                     named_outputs["Index"] = {nms_outputs[1]};

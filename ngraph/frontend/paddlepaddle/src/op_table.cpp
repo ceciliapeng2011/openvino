@@ -25,6 +25,7 @@
 #include "op/log.hpp"
 #include "op/logical_not.hpp"
 #include "op/matmul.hpp"
+#include "op/matrix_nms.hpp"
 #include "op/mul.hpp"
 #include "op/multiclass_nms.hpp"
 #include "op/pad3d.hpp"
@@ -89,6 +90,7 @@ namespace ngraph
                         {"log", op::log},
                         {"logical_not", op::logical_not},
                         {"matmul", op::matmul},
+                        {"matrix_nms", op::matrix_nms},
                         {"max_pool2d_with_index", op::pool2d},
                         {"mul", op::mul},
                         {"multiclass_nms3", op::multiclass_nms},
