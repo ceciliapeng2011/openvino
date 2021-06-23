@@ -79,38 +79,30 @@ def multiclass_nms(name: str, bboxes, scores, attrs: dict, quite=True):
         # startup program will call initializer to initialize the parameters.
         exe.run(pdpd.static.default_startup_program())
 
-        index_np = None
-        index = None
-        if attrs['return_index'] is True:
-            out_np, nms_rois_num_np, index_np = exe.run(
-                feed={'bboxes': bboxes, 'scores': scores},
-                fetch_list=output,
-                return_numpy=False)
-        else:
-            out_np, nms_rois_num_np = exe.run(
-                feed={'bboxes': bboxes, 'scores': scores},
-                fetch_list=output[:2],
-                return_numpy=False)
+        fetch_vars = [x for x in output if x is not None]
+        output_lod = exe.run(feed={'bboxes': bboxes, 'scores': scores},
+                             fetch_list=fetch_vars,
+                             return_numpy=False)
 
         # There is a bug in paddledet that dtype of model var mismatch its output LodTensor.
         # Specifically, it is 'Index' is 'int64', while its LodTensor of 'int32'.
         # This will lead to a failure in ngraph frontend op fuzzy test.
         # So here is an workaround to align the dtypes.
-        out = np.array(out_np)
-        nms_rois_num = np.array(nms_rois_num_np)
-        if index_np is not None:
-            index = np.array(index_np).astype(
-                pdpd.fluid.data_feeder.convert_dtype(output[2].dtype))
+        out = np.array(output_lod.pop(0))
+        nms_rois_num = np.array(
+            output_lod.pop(0)) if output[1] is not None else None
+        index = np.array(output_lod.pop(0)).astype(pdpd.fluid.data_feeder.convert_dtype(
+            output[2].dtype)) if output[2] is not None else None
 
         # Save inputs in order of ngraph function, to facilite Fuzzy test,
         # which accepts inputs and outputs in this order as well.
+        output_np = [out, nms_rois_num, index]
         saveModel(name,
                   exe,
                   feedkeys=['bboxes', 'scores'],
-                  fetchlist=output if attrs['return_index'] is True else output[:2],
+                  fetchlist=fetch_vars,
                   inputs=[bboxes, scores],
-                  outputs=[out, nms_rois_num, index] if attrs['return_index'] is True else [
-                      out, nms_rois_num],
+                  outputs=[x for x in output_np if x is not None],
                   target_dir=sys.argv[1])
 
     if quite is False:
@@ -242,10 +234,10 @@ def main():  # multiclass_nms
         }
     }
 
-    # case  multiclass_nms_limit_output_size
+    # case  multiclass_nms_by_nms_top_k
     test_case[4] = {  # N 1, C 1, M 6
         'name':
-        'multiclass_nms_limit_output_size',
+        'multiclass_nms_by_nms_top_k',
         'boxes':
         np.array([[[0.0, 0.0, 1.0, 1.0], [0.0, 0.1, 1.0, 1.1],
                    [0.0, -0.1, 1.0, 0.9], [0.0, 10.0, 1.0, 11.0],
@@ -257,7 +249,7 @@ def main():  # multiclass_nms
             'nms_type': 'multiclass_nms3',  # PDPD Op type
             'background_label': -1,
             'score_threshold': 0.0,
-            'nms_top_k': 3,
+            'nms_top_k': 2,
             'nms_threshold': 0.5,
             'keep_top_k': -1,
             'normalized': True,
