@@ -299,7 +299,7 @@ def main():  # multiclass_nms
     }
 
     # case multiclass_nms_not_normalized
-    test_case[11] = copy.deepcopy(test_case[1])
+    test_case[11] = copy.deepcopy(test_case[0])
     test_case[11]['name'] = 'multiclass_nms_not_normalized'
     test_case[11]['pdpd_attrs']['normalized'] = False
 
@@ -320,9 +320,58 @@ def main():  # multiclass_nms
             data_scores = t['scores']
             pdpd_attrs = t['pdpd_attrs']
 
-            pred_pdpd = NMS(t['name'], data_bboxes, data_scores,
-                            pdpd_attrs)
+            NMS(t['name'], data_bboxes, data_scores, pdpd_attrs, True)
+
+
+def TEST1(N=7, M=1200, C=21):
+    def softmax(x):
+        # clip to shiftx, otherwise, when calc loss with
+        # log(exp(shiftx)), may get log(0)=INF
+        shiftx = (x - np.max(x)).clip(-64.)
+        exps = np.exp(shiftx)
+        return exps / np.sum(exps)
+
+    BOX_SIZE = 4
+    background = 0
+    nms_threshold = 0.3
+    nms_top_k = 10
+    keep_top_k = 5
+    score_threshold = 0.01
+
+    scores = np.random.random((N * M, C)).astype('float32')
+    scores = np.apply_along_axis(softmax, 1, scores)
+    scores = np.reshape(scores, (N, M, C))
+    # There looks a bug in cnpy, which is used by pdpd fuzzy_tet,
+    # that Fortran Contiguous is required.
+    # https://github.com/OpenChemistry/tomviz/issues/1809
+    scores = np.ascontiguousarray(np.transpose(scores, (0, 2, 1)))
+
+    boxes = np.random.random((N, M, BOX_SIZE)).astype('float32')
+    boxes[:, :, 0:2] = boxes[:, :, 0:2] * 0.5
+    boxes[:, :, 2:4] = boxes[:, :, 2:4] * 0.5 + 0.5
+
+    # boxes[:, :, 0] = boxes[:, :, 0] * 10
+    # boxes[:, :, 1] = boxes[:, :, 1] * 10
+    # boxes[:, :, 2] = boxes[:, :, 2] * 10 + 10
+    # boxes[:, :, 3] = boxes[:, :, 3] * 10 + 10
+
+    pdpd_attrs = {
+        'nms_type': 'multiclass_nms3',  # PDPD Op type
+        'background_label': background,
+        'score_threshold': score_threshold,  # the less, the more bbox kept.
+        'nms_top_k': nms_top_k,  # max_output_box_per_class
+        'nms_threshold': nms_threshold,  # the bigger, the more bbox kept.
+        'keep_top_k': keep_top_k,  # -1, keep all
+        'normalized': True,
+        'nms_eta': 1.0,
+        'return_index': True
+    }
+    NMS("multiclass_nms_normalized_random", boxes, scores, pdpd_attrs)
+
+    pdpd_attrs['normalized'] = False
+    NMS("multiclass_nms_not_normalized_random", boxes, scores, pdpd_attrs)
 
 
 if __name__ == "__main__":
     main()
+    TEST1()

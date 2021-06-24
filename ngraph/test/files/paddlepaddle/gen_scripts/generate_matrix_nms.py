@@ -323,7 +323,7 @@ def main():  # matrix_nms
     }
 
     # case matrix_nms_not_normalized
-    test_case[11] = copy.deepcopy(test_case[1])
+    test_case[11] = copy.deepcopy(test_case[0])
     test_case[11]['name'] = 'matrix_nms_not_normalized'
     test_case[11]['pdpd_attrs']['normalized'] = False
 
@@ -358,5 +358,54 @@ def main():  # matrix_nms
             NMS(t['name'], data_bboxes, data_scores, pdpd_attrs)
 
 
+def TEST1(N=7, M=1200, C=21):
+    def softmax(x):
+        # clip to shiftx, otherwise, when calc loss with
+        # log(exp(shiftx)), may get log(0)=INF
+        shiftx = (x - np.max(x)).clip(-64.)
+        exps = np.exp(shiftx)
+        return exps / np.sum(exps)
+
+    BOX_SIZE = 4
+    background = 0
+    post_threshold = 0.01
+    nms_top_k = 400
+    keep_top_k = 200
+    score_threshold = 0.01
+
+    scores = np.random.random((N * M, C)).astype('float32')
+    scores = np.apply_along_axis(softmax, 1, scores)
+    scores = np.reshape(scores, (N, M, C))
+    # There looks a bug in cnpy, which is used by pdpd fuzzy_tet,
+    # that Fortran Contiguous is required.
+    # https://github.com/OpenChemistry/tomviz/issues/1809
+    scores = np.ascontiguousarray(np.transpose(scores, (0, 2, 1)))
+
+    boxes = np.random.random((N, M, BOX_SIZE)).astype('float32')
+    boxes[:, :, 0] = boxes[:, :, 0] * 10
+    boxes[:, :, 1] = boxes[:, :, 1] * 10
+    boxes[:, :, 2] = boxes[:, :, 2] * 10 + 10
+    boxes[:, :, 3] = boxes[:, :, 3] * 10 + 10
+
+    pdpd_attrs = {
+        'nms_type': 'matrix_nms',  # PDPD Op type
+        'score_threshold': score_threshold,
+        'post_threshold': post_threshold,
+        'nms_top_k': nms_top_k,
+        'keep_top_k': keep_top_k,
+        'use_gaussian': False,
+        'gaussian_sigma': 2.,
+        'background_label': background,
+        'normalized': True,
+        'return_index': True,
+        'return_rois_num': True
+    }
+    NMS("matrix_nms_normalized_random", boxes, scores, pdpd_attrs)
+
+    pdpd_attrs['normalized'] = False
+    NMS("matrix_nms_not_normalized_random", boxes, scores, pdpd_attrs)
+
+
 if __name__ == "__main__":
     main()
+    TEST1()
