@@ -18,14 +18,6 @@ if(LINUX)
     set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 endif()
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "4.0.0")
-        # gtest has issues with this with v1.8.x
-        # gtest issue is supposed to be addressed after v1.8.x
-        add_compile_options(-Wno-zero-as-null-pointer-constant)
-    endif()
-endif()
-
 set(SRC
     aligned_buffer.cpp
     all_close_f.cpp
@@ -101,6 +93,8 @@ set(SRC
     tensor.cpp
     type_prop/abs.cpp
     type_prop/acos.cpp
+    type_prop/adaptive_avg_pool.cpp
+    type_prop/adaptive_max_pool.cpp
     type_prop/asin.cpp
     type_prop/assign.cpp
     type_prop/avg_pool.cpp
@@ -121,6 +115,7 @@ set(SRC
     type_prop/ctc_greedy_decoder_seq_len.cpp
     type_prop/ctc_loss.cpp
     type_prop/deformable_convolution.cpp
+    type_prop/deformable_convolution_opset8.cpp
     type_prop/deformable_psroi_pooling.cpp
     type_prop/detection_output.cpp
     type_prop/depth_to_space.cpp
@@ -231,6 +226,8 @@ set(SRC
     visitors/partial_shape.cpp
     visitors/user_op.cpp
     visitors/value_map.cpp
+    visitors/op/adaptive_avg_pool.cpp
+    visitors/op/adaptive_max_pool.cpp
     visitors/op/batch_norm.cpp
     visitors/op/broadcast.cpp
     visitors/op/bucketize.cpp
@@ -300,6 +297,7 @@ set(SRC
     visitors/op/squeeze.cpp
     visitors/op/sqrt.cpp
     visitors/op/strided_slice.cpp
+    visitors/op/swish.cpp
     visitors/op/tanh.cpp
     visitors/op/topk.cpp
     visitors/op/transpose.cpp
@@ -389,6 +387,7 @@ set(MULTI_TEST_SRC
     backend/dft.in.cpp
     backend/divide.in.cpp
     backend/deformable_convolution.in.cpp
+    backend/deformable_convolution_opset8.in.cpp
     backend/dyn_reshape.in.cpp
     backend/experimental_detectron_topk_rois.in.cpp
     backend/strided_slice.in.cpp
@@ -478,6 +477,7 @@ set(MULTI_TEST_SRC
     backend/squared_difference.in.cpp
     backend/squeeze.in.cpp
     backend/subtract.in.cpp
+    backend/swish.in.cpp
     backend/tan.in.cpp
     backend/tanh.in.cpp
     backend/tile.in.cpp
