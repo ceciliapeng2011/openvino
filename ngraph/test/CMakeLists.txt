@@ -528,6 +528,7 @@ if (NGRAPH_PDPD_FRONTEND_ENABLE)
 
     find_package(Python3 COMPONENTS Interpreter)
     set(PDPD_PYTHON_OK TRUE)
+    set(Python3_EXECUTABLE /usr/bin/python3)
     if(NOT Python3_FOUND)
         message("Python3 is required to build the PDPD frontend unit tests")
         set(PDPD_PYTHON_OK FALSE)
