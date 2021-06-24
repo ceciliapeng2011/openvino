@@ -153,7 +153,6 @@ namespace fuzzyOp
         }
 
         const auto results = function->get_results();
-        bool use_float_test = false;
         for (size_t i = 0; i < results.size(); i++)
         {
             // read expected output npy file
@@ -163,7 +162,6 @@ namespace fuzzyOp
             if (output_dtype == element::f32)
             {
                 add_input_output<float>(output, test_case, false);
-                use_float_test = true;
             }
             else if (output_dtype == element::i32)
             {
@@ -179,14 +177,7 @@ namespace fuzzyOp
             }
         }
 
-        if (use_float_test)
-        {
-            test_case.run();
-        }
-        else
-        {
-            test_case.run();
-        }
+        test_case.run(DEFAULT_FLOAT_TOLERANCE_BITS +11);
     }
 
     TEST_P(PDPDFuzzyOpTest, test_fuzzy)
