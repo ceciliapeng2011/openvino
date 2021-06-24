@@ -37,14 +37,13 @@ namespace ngraph
                         decay_function = MatrixNms::DecayFunction::GAUSSIAN;
                     }
 
-                    
                     auto out_names = node.get_output_names();
                     PDPD_ASSERT(out_names.size() == 3 || out_names.size() == 2,
                                 "Unexpected number of outputs of MatrixNMS: " + out_names.size());
 
                     element::Type type_num = i32;
                     bool return_rois_num = true;
-                    auto it = std::find(out_names.begin(), out_names.end(), "RoisNum");                  
+                    auto it = std::find(out_names.begin(), out_names.end(), "RoisNum");
                     if (it != out_names.end())
                     {
                         type_num = node.get_out_port_type("RoisNum");
@@ -53,8 +52,8 @@ namespace ngraph
                     {
                         return_rois_num = false;
                     }
-                    
-                    auto type_index = node.get_out_port_type("Index");                 
+
+                    auto type_index = node.get_out_port_type("Index");
                     PDPD_ASSERT((type_index == i32 || type_index == i64) &&
                                     (type_num == i32 || type_num == i64),
                                 "Unexpected data type of outputs of MatrixNMS");
@@ -63,21 +62,20 @@ namespace ngraph
 
                     NamedOutputs named_outputs;
                     std::vector<Output<Node>> nms_outputs;
-                    nms_outputs =
-                        std::make_shared<MatrixNms>(bboxes,
-                                                    scores,
-                                                    MulticlassNms::SortResultType::SCORE,
-                                                    false, // sort_result_across_batch
-                                                    type_index,
-                                                    score_threshold,
-                                                    nms_top_k,
-                                                    keep_top_k,
-                                                    background_class,
-                                                    decay_function,
-                                                    gaussian_sigma,
-                                                    post_threshold,
-                                                    normalized)
-                            ->outputs();
+                    nms_outputs = std::make_shared<MatrixNms>(bboxes,
+                                                              scores,
+                                                              MulticlassNms::SortResultType::SCORE,
+                                                              false, // sort_result_across_batch
+                                                              type_index,
+                                                              score_threshold,
+                                                              nms_top_k,
+                                                              keep_top_k,
+                                                              background_class,
+                                                              decay_function,
+                                                              gaussian_sigma,
+                                                              post_threshold,
+                                                              normalized)
+                                      ->outputs();
 
                     named_outputs["Out"] = {nms_outputs[0]};
                     named_outputs["Index"] = {nms_outputs[1]};
