@@ -44,7 +44,7 @@ def pdpd_attr_to_list(s, p, d):
     return strides, padding, dilations
 
 
-def ngraph_deform_conv(test_x, weight, offset, mask,
+def ngraph_deform_conv(test_x, weight, offset, mask, bias,
                        strides: List[int] = [1, 1],
                        pads_begin: List[int] = [0, 0],
                        pads_end: List[int] = [0, 0],
@@ -70,13 +70,30 @@ def ngraph_deform_conv(test_x, weight, offset, mask,
                                          deformable_group=deformable_groups, group=groups,
                                          use_bilinear_interpolation_padding=True,
                                          name='y')
+    if bias is not None:
+        s = graph.outputs()[0].get_partial_shape().get_shape()
+        node_bias = ng.parameter(
+            shape=bias.shape, name='bias', dtype=np.float32)
+        target_shape = ng.constant(
+            np.array([1, bias.shape[0], 1, 1], dtype=np.int32))
+        new_bias = opset.reshape(node_bias, target_shape, special_zero=False)
+        graph = opset.add(graph, new_bias, name='y')
+
+    graph = ng.result(graph, name='y')
+
+    parameters = [node_x, node_deform_values, node_w]
+    inputs_dict = {'x': test_x, "deform_values": offset, "w": weight}
+    if bias is not None:
+        inputs_dict['bias'] = bias
+        parameters.append(node_bias)
+
     function = ng.Function(
-        graph, [node_x, node_deform_values, node_w], "deform_conv")
+        graph, parameters, "deform_conv")
+
     ie_network = ng.function_to_cnn(function)
     ie = IECore()
     executable_network = ie.load_network(ie_network, 'CPU')
-    output = executable_network.infer(
-        {'x': test_x, "deform_values": offset, "w": weight})
+    output = executable_network.infer(inputs_dict)
 
     return output['y']
 
@@ -136,7 +153,7 @@ def deformable_conv(name: str, x, weight, offset, mask, bias, stride=1, padding=
             stride, padding, dilation)
 
         ng_result = ngraph_deform_conv(
-            x, weight, offset, mask, strides, paddings, paddings, dilations, deformable_groups, groups)
+            x, weight, offset, mask, bias, strides, paddings, paddings, dilations, deformable_groups, groups)
         pdpd_result = outs
 
         match = np.all(np.isclose(
@@ -223,8 +240,7 @@ def generator(input_size=[2, 8, 4, 4],  # NCHW
     weight = np.random.random(size=filter_size).astype(dtype)
 
     offset = (10 *
-              np.random.uniform(0, 1, size=offset_size)).astype(
-        'int').astype(dtype)  # TODO: negative, fractioned
+              np.random.uniform(-1, 1, size=offset_size)).astype(dtype)  # TODO: negative, fractioned
 
     mask = (10 *
             np.random.random(size=mask_size)).astype(dtype) if not no_mask else None
@@ -402,6 +418,14 @@ def TestWithDilationList():
                     data_weight, data_offset, data_mask, data_bias, dilation=dilation)
 
 
+def TestWithPadStrideDilation():
+    dilation = [3, 2]
+    data_x, data_weight, data_offset, data_mask, data_bias = generator(
+        input_size=[1, 1, 7, 7], dilation=dilation, padding=1, stride=[3, 2])
+    deformable_conv('deformable_conv_with_pad_stride_dilation', data_x,
+                    data_weight, data_offset, data_mask, data_bias, dilation=dilation, padding=1, stride=[3, 2])
+
+
 def TestWithGroup():
     data_x, data_weight, data_offset, data_mask, data_bias = generator(
         groups=2)
@@ -414,6 +438,13 @@ def TestWithDeformableGroups():
         deformable_groups=2)
     deformable_conv('deformable_conv_with_deformable_groups', data_x,
                     data_weight, data_offset, data_mask, data_bias, deformable_groups=2)
+
+
+def TestWithGroupDeformableGroups():
+    data_x, data_weight, data_offset, data_mask, data_bias = generator(
+        groups=2, deformable_groups=2)
+    deformable_conv('deformable_conv_with_groups_and_deformable_groups', data_x,
+                    data_weight, data_offset, data_mask, data_bias, groups=2, deformable_groups=2)
 
 
 def TestWithMask():
@@ -485,9 +516,13 @@ if __name__ == "__main__":
         TestWithDilationTuple()
         TestWithDilationList()
 
+        TestWithPadStrideDilation()
+
         TestWithGroup()
         TestWithDeformableGroups()
 
+        TestWithGroupDeformableGroups()
+
         TestWithMask()
-        # TestWithBias()
-        # TestWithMaskBias()
+        TestWithBias()
+        TestWithMaskBias()
