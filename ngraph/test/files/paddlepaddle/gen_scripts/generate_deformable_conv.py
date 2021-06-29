@@ -68,7 +68,7 @@ def ngraph_deform_conv(test_x, weight, offset, mask,
                                          modulation_scalars=mask,
                                          auto_pad="EXPLICIT",
                                          deformable_group=deformable_groups, group=groups,
-                                         use_bilinear_interpolation_padding=False,
+                                         use_bilinear_interpolation_padding=True,
                                          name='y')
     function = ng.Function(
         graph, [node_x, node_deform_values, node_w], "deform_conv")
@@ -142,15 +142,18 @@ def deformable_conv(name: str, x, weight, offset, mask, bias, stride=1, padding=
         match = np.all(np.isclose(
             pdpd_result, ng_result, rtol=1e-4, atol=1e-5))
 
-        print('\n\033[94m' +
+        prefix_color = '\n\033[92m' if match else '\n\033[91m'
+        print(prefix_color +
               'TestCase {} Result {} '.format(name, match) + '\033[0m\n')
 
         if not match:
             np.set_printoptions(precision=2)
             np.set_printoptions(suppress=True)
 
-            # print(pdpd_result)
-            # print(ng_result)
+            print(prefix_color +
+                  'pdpd_result: {}'.format(pdpd_result) + '\033[0m\n')
+            print(prefix_color +
+                  'ng_result: {}'.format(ng_result) + '\033[0m\n')
 
             # raise ValueError(name + ': OV result does not match PDPD!')
 
@@ -219,12 +222,12 @@ def generator(input_size=[2, 8, 4, 4],  # NCHW
 
     weight = np.random.random(size=filter_size).astype(dtype)
 
-    offset = 10 * \
-        np.random.uniform(size=offset_size).astype(
-            'int').astype(dtype)  # TODO: negative, fractioned
+    offset = (10 *
+              np.random.uniform(0, 1, size=offset_size)).astype(
+        'int').astype(dtype)  # TODO: negative, fractioned
 
-    mask = 10 * \
-        np.random.random(size=mask_size).astype(dtype) if not no_mask else None
+    mask = (10 *
+            np.random.random(size=mask_size)).astype(dtype) if not no_mask else None
 
     bias = np.random.uniform(-1, 1,
                              size=(filter_size[0],)).astype(dtype) if not no_bias else None
@@ -414,8 +417,40 @@ def TestWithDeformableGroups():
 
 
 def TestWithMask():
-    data_x, data_weight, data_offset, data_mask, data_bias = generator(
-        no_mask=False)
+    data_x, data_weight, data_offset, data_mask, data_bias = generator(input_size=[2, 4, 3, 3], out_channels=1, kernel_size=[2, 2],
+                                                                       no_mask=False)
+
+    # {1, 1, 4, 4}
+    # data_x = np.array([1, 2, 3, 4,
+    #                   5, 6, 7, 8,
+    #                   9, 10, 11, 12,
+    #                   13, 14, 15, 16]).astype('float32')
+    # data_x = np.reshape(data_x, (1, 1, 4, 4))
+
+    # # {1, 1, 2, 2}
+    # data_weight = np.array([1, 2,
+    #                        -1, -2]).astype('float32')
+    # data_weight = np.reshape(data_weight, (1, 1, 2, 2))
+
+    # # {1, 8, 3, 3}
+    # data_offset = np.zeros((1, 8, 3, 3)).astype('float32')
+
+    # {1, 4, 3, 3}
+    # data_mask2 = np.array([0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5,
+    #                        0.5, 0.5, 0.5]).astype('float32')
+    # data_mask = np.reshape(data_mask, (1, 4, 3, 3))
+    # data_bias = None
+
     deformable_conv('deformable_conv_with_mask', data_x,
                     data_weight, data_offset, data_mask, data_bias)
 
@@ -435,23 +470,24 @@ def TestWithMaskBias():
 
 
 if __name__ == "__main__":
-    # TEST1()
+    for i in range(10):
+        TEST1()
 
-    TestWithPad()
-    # TestWithPadTuple()
-    # TestWithPadList()
+        TestWithPad()
+        TestWithPadTuple()
+        TestWithPadList()
 
-    # TestWithStride()
-    # TestWithStrideTuple()
-    # TestWithStrideList()
+        TestWithStride()
+        TestWithStrideTuple()
+        TestWithStrideList()
 
-    # TestWithDilation()
-    # TestWithDilationTuple()
-    # TestWithDilationList()
+        TestWithDilation()
+        TestWithDilationTuple()
+        TestWithDilationList()
 
-    # TestWithGroup()
-    # TestWithDeformableGroups()
+        TestWithGroup()
+        TestWithDeformableGroups()
 
-    # TestWithMask()
-    # TestWithBias()
-    # TestWithMaskBias()
+        TestWithMask()
+        # TestWithBias()
+        # TestWithMaskBias()
