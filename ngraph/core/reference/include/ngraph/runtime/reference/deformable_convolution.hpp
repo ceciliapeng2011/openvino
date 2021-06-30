@@ -85,17 +85,17 @@ namespace ngraph
                                                     const float y_idx,
                                                     const int x_size,
                                                     const int y_size,
-                                                    const bool use_bilinear_interpolation_padding)
+                                                    const bool use_pad)
                 {
-                    const int y1 = std::max(static_cast<int>(std::floor(y_idx)), 0);
-                    const int x1 = std::max(static_cast<int>(std::floor(x_idx)), 0);
+                    const int y1 = use_pad ? static_cast<int>(std::floor(y_idx))
+                                           : std::max(static_cast<int>(std::floor(y_idx)), 0);
+                    const int x1 = use_pad ? static_cast<int>(std::floor(x_idx))
+                                           : std::max(static_cast<int>(std::floor(x_idx)), 0);
 
-                    const int y2 = use_bilinear_interpolation_padding
-                                       ? y1 + 1
-                                       : std::min(static_cast<int>(std::ceil(y_idx)), y_size - 1);
-                    const int x2 = use_bilinear_interpolation_padding
-                                       ? x1 + 1
-                                       : std::min(static_cast<int>(std::ceil(x_idx)), x_size - 1);
+                    const int y2 =
+                        use_pad ? y1 + 1 : std::min(static_cast<int>(std::ceil(y_idx)), y_size - 1);
+                    const int x2 =
+                        use_pad ? x1 + 1 : std::min(static_cast<int>(std::ceil(x_idx)), x_size - 1);
 
                     const float distX = x_idx - x1;
                     const float distY = y_idx - y1;
@@ -185,13 +185,26 @@ namespace ngraph
                                                 offsets_channel[offsets_spatial_size + out_idx];
                                             T rel_i_y = i_y + (f_y * p.dilation[0]) + y_offset;
                                             T rel_i_x = i_x + (f_x * p.dilation[1]) + x_offset;
-
                                             T mask_val = mask_channel[out_idx];
 
                                             offsets_channel += offsets_channel_size;
                                             mask_channel += mask_channel_size;
-                                            bool padding = !(in_range(rel_i_x, {0, input_size_x}) &&
-                                                             in_range(rel_i_y, {0, input_size_y}));
+
+                                            bool padding;
+                                            if (use_bilinear_interpolation_padding)
+                                            {
+                                                padding =
+                                                    !((static_cast<int>(rel_i_x) > -1 &&
+                                                       static_cast<int>(rel_i_x) < input_size_x) &&
+                                                      (static_cast<int>(rel_i_y) > -1 &&
+                                                       static_cast<int>(rel_i_y) < input_size_y));
+                                            }
+                                            else
+                                            {
+                                                padding = !(in_range(rel_i_x, {0, input_size_x}) &&
+                                                            in_range(rel_i_y, {0, input_size_y}));
+                                            }
+
                                             if (padding)
                                                 continue;
 
@@ -274,7 +287,7 @@ namespace ngraph
 
                 const Shape group_mask_shape = shape_scale(shape_reduce(m_shape), groups);
                 const size_t group_mask_size = shape_size(group_mask_shape);
-                const size_t group_mask_batch_size = shape_size(shape_reduce(group_mask_shape));
+                const size_t group_mask_batch_size = shape_size(shape_reduce(m_shape));
 
                 const size_t out_ch_size = shape_size(shape_reduce(shape_reduce(out_shape)));
 
