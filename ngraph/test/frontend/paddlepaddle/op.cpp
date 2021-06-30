@@ -31,6 +31,21 @@ static const std::string PDPD = "pdpd";
 static const std::string PATH_TO_MODELS = "/paddlepaddle/models/";
 
 /* helper */
+#include <iomanip>   // std::setprecision, std::setw
+#include <iostream>  // std::cout, std::fixed
+
+template<typename T>
+std::ostream& operator<<(std::ostream& s, std::vector<T>& q)
+{
+    s << "\n{";
+    for(auto& v : q)
+    {
+        s << std::fixed << std::setprecision(2) << v << ", ";
+    }
+    s << "}\n";
+    return s;
+}
+
 static bool ends_with(std::string const& value, std::string const& ending)
 {
     if (ending.size() > value.size())
@@ -133,6 +148,11 @@ namespace fuzzyOp
                 model_folder + "/input" + std::to_string((parameters.size() - 1) - i) + ".npy";
             cnpy::NpyArray input = cnpy::npy_load(data_file);
             auto input_dtype = parameters[i]->get_element_type();
+
+            // debug
+            std::cout << "\ndata_file: " << data_file << std::endl;
+            std::cout << "cnpy load shape: " << input.shape << std::endl;
+            std::cout << "parameter shape: " << parameters[i]->get_partial_shape() << std::endl;
 
             if (input_dtype == element::f32)
             {
