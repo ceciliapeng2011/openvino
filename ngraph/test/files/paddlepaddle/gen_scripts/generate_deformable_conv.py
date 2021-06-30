@@ -500,8 +500,19 @@ def TestWithMaskBias():
                     data_weight, data_offset, data_mask, data_bias)
 
 
+def TestWithMaskBiasAllAttr():
+    data_x, data_weight, data_offset, data_mask, data_bias = generator(input_size=[1, 4, 7, 7],
+                                                                       dilation=[3, 2], padding=1, stride=[3, 2],
+                                                                       no_mask=False, no_bias=False,
+                                                                       groups=2, deformable_groups=2)
+    deformable_conv('deformable_conv_full', data_x,
+                    data_weight, data_offset, data_mask, data_bias,
+                    groups=2, deformable_groups=2,
+                    dilation=[3, 2], padding=1, stride=[3, 2])
+
+
 if __name__ == "__main__":
-    for i in range(10):
+    for i in range(1):
         TEST1()
 
         TestWithPad()
@@ -526,3 +537,5 @@ if __name__ == "__main__":
         TestWithMask()
         TestWithBias()
         TestWithMaskBias()
+
+        TestWithMaskBiasAllAttr()
