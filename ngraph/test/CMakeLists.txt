@@ -528,12 +528,8 @@ set(SRC ${FRONTEND_SHARED_TESTS_SRC} ${SRC})
 if (NGRAPH_PDPD_FRONTEND_ENABLE)
     find_package (PythonInterp 3 REQUIRED)
     set(PDPD_PYTHON_OK TRUE)
-<<<<<<< HEAD
     set(Python3_EXECUTABLE /usr/bin/python3)
-    if(NOT Python3_FOUND)
-=======
     if(NOT PYTHON_EXECUTABLE)
->>>>>>> nosovmik/pdpd_frontend
         message("Python3 is required to build the PDPD frontend unit tests")
         set(PDPD_PYTHON_OK FALSE)
     endif()
