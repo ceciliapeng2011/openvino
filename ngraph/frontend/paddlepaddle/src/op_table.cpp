@@ -10,6 +10,7 @@
 #include "op/concat.hpp"
 #include "op/conv2d.hpp"
 #include "op/conv2d_transpose.hpp"
+#include "op/deformable_conv.hpp"
 #include "op/dropout.hpp"
 #include "op/elementwise_ops.hpp"
 #include "op/equal.hpp"
@@ -67,6 +68,8 @@ namespace ngraph
                         {"clip", op::clip},
                         {"concat", op::concat},
                         {"conv2d", op::conv2d},
+                        {"deformable_conv", op::deformable_conv},
+                        {"deformable_conv_v1", op::deformable_conv},
                         {"depthwise_conv2d", op::conv2d},
                         {"depthwise_conv2d_transpose", op::conv2d_transpose},
                         {"dropout", op::dropout},
