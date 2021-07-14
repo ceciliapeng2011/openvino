@@ -8,11 +8,8 @@
 #include "op/clip.hpp"
 #include "op/concat.hpp"
 #include "op/conv2d.hpp"
-#include "op/deformable_conv.hpp"
-#include "op/elementwise_ops.hpp"
-#include "op/matrix_nms.hpp"
-#include "op/multiclass_nms.hpp"
 #include "op/conv2d_transpose.hpp"
+#include "op/deformable_conv.hpp"
 #include "op/dropout.hpp"
 #include "op/elementwise_ops.hpp"
 #include "op/equal.hpp"
@@ -28,6 +25,8 @@
 #include "op/log.hpp"
 #include "op/logical_not.hpp"
 #include "op/matmul.hpp"
+#include "op/matrix_nms.hpp"
+#include "op/multiclass_nms.hpp"
 #include "op/relu.hpp"
 #include "op/rnn.hpp"
 #include "op/scale.hpp"
@@ -44,35 +43,32 @@ namespace ngraph
         {
             std::map<std::string, CreatorFunction> get_supported_ops()
             {
-                return {{"arg_max", op::argmax},
-                        {"assign_value", op::assign_value},
-                        {"batch_norm", op::batch_norm},
-                        {"cast", op::cast},
-                        {"clip", op::clip},
-                        {"concat", op::concat},
-                        {"conv2d", op::conv2d},
-                        {"deformable_conv", op::deformable_conv},
-                        {"deformable_conv_v1", op::deformable_conv},
-                        {"elementwise_add", op::elementwise_add},
-                        {"elementwise_div", op::elementwise_div},
-                        {"elementwise_max", op::elementwise_max},
-                        {"elementwise_min", op::elementwise_min},
-                        {"elementwise_mul", op::elementwise_mul},
-                        {"elementwise_pow", op::elementwise_pow},
-                        {"elementwise_sub", op::elementwise_sub},
-                        {"matrix_nms", op::matrix_nms},
-                        {"multiclass_nms3", op::multiclass_nms},
-                        {"relu", op::relu},
-                        {"scale", op::scale},
+                return {
+                    {"arg_max", op::argmax},
+                    {"assign_value", op::assign_value},
+                    {"batch_norm", op::batch_norm},
                     {"bilinear_interp_v2", op::bilinear_interp_v2},
                     {"bilinear_interp", op::bilinear_interp_v2},
-                    {"bmm", op::matmul},
-                    {"conv2d_transpose", op::conv2d_transpose},
+                    {"bmm", op::matmul},                    
+                    {"cast", op::cast},
+                    {"clip", op::clip},
+                    {"concat", op::concat},
+                    {"conv2d", op::conv2d},
+                    {"conv2d_transpose", op::conv2d_transpose},                  
+                    {"deformable_conv", op::deformable_conv},
+                    {"deformable_conv_v1", op::deformable_conv},
                     {"depthwise_conv2d", op::conv2d},
                     {"depthwise_conv2d_transpose", op::conv2d_transpose},
                     {"dropout", op::dropout},
+                    {"elementwise_add", op::elementwise_add},
+                    {"elementwise_div", op::elementwise_div},
+                    {"elementwise_max", op::elementwise_max},
+                    {"elementwise_min", op::elementwise_min},
+                    {"elementwise_mul", op::elementwise_mul},
+                    {"elementwise_pow", op::elementwise_pow},
+                    {"elementwise_sub", op::elementwise_sub},
                     {"equal", op::equal},
-                    {"expand_v2", op::expand_v2},
+                    {"expand_v2", op::expand_v2},                    
                     {"fill_constant_batch_size_like", op::fill_constant_batch_size_like},
                     {"fill_constant", op::fill_constant},
                     {"flatten_contiguous_range", op::flatten_contiguous_range},
@@ -83,15 +79,18 @@ namespace ngraph
                     {"log", op::log},
                     {"logical_not", op::logical_not},
                     {"matmul", op::matmul},
+                    {"matrix_nms", op::matrix_nms},
+                    {"multiclass_nms3", op::multiclass_nms},
                     {"nearest_interp_v2", op::nearest_interp_v2},
                     {"nearest_interp", op::nearest_interp_v2},
                     {"rnn", op::rnn},
                     {"relu", op::relu},
                     {"scale", op::scale},
                     {"split", op::split},
-                    {"transpose2", op::transpose2},
-            };
+                    {"transpose2", op::transpose2}
+                };
 
-        } // namespace pdpd
-    }     // namespace frontend
-} // namespace ngraph
+            } // namespace pdpd
+        }     // namespace pdpd
+    }         // namespace frontend
+}
