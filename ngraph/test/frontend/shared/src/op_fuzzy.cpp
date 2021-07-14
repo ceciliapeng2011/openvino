@@ -16,6 +16,8 @@ using namespace InferenceEngine;
 using namespace ngraph;
 using namespace ngraph::frontend;
 
+using namespace ngraph::test;
+
 std::string
     FrontEndFuzzyOpTest::getTestCaseName(const testing::TestParamInfo<FuzzyOpTestParam>& obj)
 {
@@ -49,14 +51,15 @@ void FrontEndFuzzyOpTest::doLoadFromFile()
 
 template <typename T1, typename T2>
 inline void
-    addInputOutput(cnpy::NpyArray& npy_array, test::TestCase<T2>& test_case, bool is_input = true)
+    addInputOutput(cnpy::NpyArray& npy_array, test::TestCase<T2, TestCaseType::DYNAMIC>& test_case, bool is_input = true)
 {
     T1* npy_begin = npy_array.data<T1>();
     std::vector<T1> data(npy_begin, npy_begin + npy_array.num_vals);
     if (is_input)
         test_case.add_input(data);
     else
-        test_case.add_expected_output(data);
+        // test_case.add_expected_output(data);
+        test_case.add_expected_output(npy_array.shape, data);
 }
 
 static bool endsWith(std::string const& value, std::string const& ending)
@@ -81,7 +84,7 @@ void FrontEndFuzzyOpTest::runConvertedModel(const std::shared_ptr<ngraph::Functi
     auto modelFolder = getModelFolder(modelFile);
 
     // run test
-    auto testCase = test::TestCase<T>(function);
+    auto testCase = test::TestCase<T, TestCaseType::DYNAMIC>(function);
 
     const auto parameters = function->get_parameters();
     for (size_t i = 0; i < parameters.size(); i++)
