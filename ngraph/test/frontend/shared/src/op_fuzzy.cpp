@@ -140,11 +140,12 @@ void FrontEndFuzzyOpTest::runConvertedModel(const std::shared_ptr<ngraph::Functi
         }
     }
 
-    if (useFloatTest)
-    {
-        testCase.run_with_tolerance_as_fp();
-    }
-    else
+    // TODO: how to handle case like NMS with both float and int outputs.
+    // if (useFloatTest) 
+    // {
+    //     testCase.run_with_tolerance_as_fp();
+    // }
+    // else
     {
         testCase.run();
     }
