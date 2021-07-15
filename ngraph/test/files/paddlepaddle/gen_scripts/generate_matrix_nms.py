@@ -303,9 +303,9 @@ def main():  # matrix_nms
                    [0.0, 10.1, 1.0, 11.1], [0.0, 100.0, 1.0,
                                             101.0]]]).astype('float32'),
         'scores':
-        np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
+        np.array([[[0.9, 0.75, 0.6, 0.96, 0.5, 0.3],
                    [0.95, 0.75, 0.6, 0.80, 0.5, 0.3]],
-                  [[0.9, 0.75, 0.6, 0.95, 0.5, 0.3],
+                  [[0.9, 0.75, 0.6, 0.96, 0.5, 0.3],
                    [0.95, 0.75, 0.6, 0.80, 0.5, 0.3]]]).astype('float32'),
         'pdpd_attrs': {
             'nms_type': 'matrix_nms',  # PDPD Op type
@@ -346,7 +346,7 @@ def main():  # matrix_nms
     # bboxes shape (N, M, 4)
     # scores shape (N, C, M)
     for i, t in enumerate(test_case):
-        if t is not None:
+        if t is not None and i == 10:
             print('\033[95m' +
                   '\n\Generating matrix_nms test case: {} {} ......'.format(i, t['name']) +
                   '\033[0m')
@@ -408,4 +408,4 @@ def TEST1(N=7, M=1200, C=21):
 
 if __name__ == "__main__":
     main()
-    TEST1()
+    # TEST1()
