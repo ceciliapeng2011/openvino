@@ -65,10 +65,10 @@ def ngraph_deform_conv(test_x, weight, offset, mask, bias,
                                          strides=strides,
                                          pads_begin=pads_begin, pads_end=pads_end,
                                          dilations=dilations,
-                                         modulation_scalars=mask,
+                                         mask=mask,
                                          auto_pad="EXPLICIT",
                                          deformable_group=deformable_groups, group=groups,
-                                         use_bilinear_interpolation_padding=True,
+                                         bilinear_interpolation_pad=True,
                                          name='y')
     if bias is not None:
         s = graph.outputs()[0].get_partial_shape().get_shape()
