@@ -8,6 +8,8 @@
 
 #include <frontend_manager/frontend_manager.hpp>
 
+#include "util/engine/engine_factory.hpp"
+
 using FuzzyOpTestParam = std::tuple<std::string,   // FrontEnd name
                                     std::string,   // Base path to models
                                     std::string>;  // Model name
@@ -30,5 +32,6 @@ protected:
 
     void doLoadFromFile();
 
+    template <typename Engine, ngraph::test::TestCaseType tct = ngraph::test::TestCaseType::STATIC>
     void runConvertedModel(const std::shared_ptr<ngraph::Function> function, const std::string& model_file);
 };
