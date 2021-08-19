@@ -64,7 +64,7 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
                                        lod_level=1)
 
         if attrs['nms_type'] is 'multiclass_nms3':
-            output = ops.multiclass_nms(bboxes=node_boxes,
+            nms_outputs = ops.multiclass_nms(bboxes=node_boxes,
                                         scores=node_scores,
                                         background_label=attrs['background_label'],
                                         score_threshold=attrs['score_threshold'],
@@ -75,7 +75,7 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
                                         nms_eta=attrs['nms_eta'],
                                         return_index=attrs['return_index'])
         else:
-            output = ops.matrix_nms(bboxes=node_boxes,
+            nms_outputs = ops.matrix_nms(bboxes=node_boxes,
                                     scores=node_scores,
                                     score_threshold=attrs['score_threshold'],
                                     post_threshold=attrs['post_threshold'],
@@ -87,6 +87,13 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
                                     normalized=attrs['normalized'],
                                     return_index=attrs['return_index'],
                                     return_rois_num=attrs['return_rois_num'])
+        # output of NMS is mix of int and float. To make it easy for op_fuzzy unittest, cast int output to float.
+        output = []
+        for x in nms_outputs:
+            if x is not None:
+                if x.dtype==pdpd.int32 or x.dtype==pdpd.int64:
+                    x = pdpd.cast(x, "float32")
+            output.append(x)
 
         cpu = pdpd.static.cpu_places(1)
         exe = pdpd.static.Executor(cpu[0])
