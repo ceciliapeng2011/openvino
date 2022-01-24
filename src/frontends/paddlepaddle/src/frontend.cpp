@@ -55,9 +55,27 @@ NamedOutputs make_ng_node(const std::map<pdpd::TensorName, Output<Node>>& nodes,
                     // const auto& shape = in_tensor->get_partial_shape();
                     const auto& type = in_tensor->get_element_type();
 
-                    // auto fakenode = std::make_shared<Squeeze>(type);
-                    auto fakenode = ov::opset6::Constant::create(type, {0, 3}, {0}); // FIXME
-                    // auto fakenode = std::make_shared<Constant>(type, {0, 3});
+                    // fake node shape
+                    const auto& tensor_desc = var_desc.type().tensor_array().tensor();
+                    const auto& dims = tensor_desc.dims();
+                    const auto& dimensions = PartialShape(std::vector<Dimension>(dims.begin(), dims.end()));
+                    Shape shape_fake(dimensions.size(), 0);
+                    auto axis = 0;
+                    for(const auto& dim : dimensions) { 
+                        // get the first -1, to make it be the concat axis.
+                        if(dim.is_static()) { // TODO: if more than one -1?
+                            auto min_val = dim.get_interval().get_min_val();
+                            shape_fake[axis] = min_val;
+                        }
+                        axis++;
+                    }
+                    if (dimensions.is_static()) { // concat at the first axis.
+                        shape_fake[0] = 0;                        
+                    }                    
+                    std::cout << "make_ng_node: tensorarray shape: " << dimensions << "fake node: " << shape_fake << std::endl;               
+
+                    // auto fakenode = ov::opset6::Constant::create(type, {0, 3}, {0}); // FIXME
+                    auto fakenode = ov::opset6::Constant::create(type, shape_fake, {0});
                     fakenode->set_friendly_name(in_tensor_name);
                     fakenode->output(0).get_tensor().add_names({in_tensor_name}); // ??
                     named_inputs[input_port.parameter()].push_back(fakenode);

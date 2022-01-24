@@ -93,11 +93,13 @@ void InputModelPDPD::InputModelPDPDImpl::loadPlaces() {
                 auto& var_place = m_var_places[var.name()];
 
                 const auto& tensor_desc = var_place->get_desc().type().tensor_array().tensor();
-                // const auto& dims = tensor_desc.dims();
+                const auto& dims = tensor_desc.dims();
+                std::cout << "loadPlaces: tensorarray shape: " << std::vector<Dimension>(dims.begin(), dims.end()) << std::endl;
 
+                // Set partialshape for body_graph Parameter.
                 var_place->set_element_type(TYPE_MAP[tensor_desc.data_type()]);
-                // var_place->set_partial_shape(PartialShape(std::vector<Dimension>(dims.begin(), dims.end()))); // FIXME
-                var_place->set_partial_shape(PartialShape(std::vector<Dimension>(0, 3))); // HARDCODE
+                var_place->set_partial_shape(PartialShape(std::vector<Dimension>(dims.begin(), dims.end()))); // FIXME
+                // var_place->set_partial_shape(PartialShape(std::vector<Dimension>(0, 3))); // HARDCODE
             }            
         }
 

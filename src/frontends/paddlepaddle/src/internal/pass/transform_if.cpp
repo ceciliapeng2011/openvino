@@ -198,6 +198,12 @@ ov::frontend::pdpd::pass::ConditionalBlockTensorArrayOutputSlice::ConditionalBlo
         auto loop = std::make_shared<Loop>(trip_count, cond);
         const int32_t subblock_idx = conditionalblock_node->get_subblock_index();
         const auto& body_graph = functions[subblock_idx];
+
+        auto body_condition = std::make_shared<Constant>(element::boolean, ngraph::Shape{1}, false);
+        auto condition_result = std::make_shared<::ngraph::op::Result>(body_condition->output(0));
+        body_graph->add_results({condition_result});
+        body_graph->validate_nodes_and_infer_types();
+
         loop->set_function(body_graph);
 
         // find_subgraph_match_to_pattern
@@ -221,12 +227,12 @@ ov::frontend::pdpd::pass::ConditionalBlockTensorArrayOutputSlice::ConditionalBlo
             FRONT_END_GENERAL_CHECK(marker, "could not find matching external input for internal parameter ", parameters[i]->get_friendly_name());            
         }
 
-        loop->set_special_body_ports(Loop::SpecialBodyPorts{-1, -1});
+        const auto condition_output_idx = body_graph->get_result_index(condition_result);
+        loop->set_special_body_ports(Loop::SpecialBodyPorts{-1, condition_output_idx});
         
         // replace output
         const auto& results = body_graph->get_results();
-        OutputVector outputs(results.size());
-        for (size_t i = 0; i < results.size(); i++) {
+        for (size_t i = 0; i < conditionalblock_node->outputs().size(); i++) {
             auto out = loop->get_iter_value(results[i], -1);
             // auto out = loop->get_concatenated_slices(results[i], 0/*start*/, 1 /*stride*/, 1/*part_size*/, -1/*end*/, 0/*axis*/);
             conditionalblock_node->output(i).replace(out);
