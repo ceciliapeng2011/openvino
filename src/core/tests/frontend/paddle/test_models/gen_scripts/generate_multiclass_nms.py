@@ -372,6 +372,50 @@ def TEST1(N=7, M=1200, C=21):
     NMS("multiclass_nms_not_normalized_random", boxes, scores, pdpd_attrs)
 
 
+def TestMulticlassNMSLoDInput(M=1200, C=21):
+    def softmax(x):
+        # clip to shiftx, otherwise, when calc loss with
+        # log(exp(shiftx)), may get log(0)=INF
+        shiftx = (x - np.max(x)).clip(-64.)
+        exps = np.exp(shiftx)
+        return exps / np.sum(exps)
+
+    BOX_SIZE = 4
+    background = 0
+    nms_threshold = 0.3
+    nms_top_k = 10
+    keep_top_k = 5
+    score_threshold = 0.01
+    normalized = False
+
+    scores = np.random.random((M, C)).astype('float32')
+    scores = np.apply_along_axis(softmax, 1, scores)
+
+    boxes = np.random.random((M, C, BOX_SIZE)).astype('float32')
+    boxes[:, :, 0] = boxes[:, :, 0] * 10
+    boxes[:, :, 1] = boxes[:, :, 1] * 10
+    boxes[:, :, 2] = boxes[:, :, 2] * 10 + 10
+    boxes[:, :, 3] = boxes[:, :, 3] * 10 + 10
+
+    # box_lod = [[1200]]
+    box_lod = [1200]
+    rois_num = np.array(box_lod).astype('int32')
+
+    pdpd_attrs = {
+        'nms_type': 'multiclass_nms3',  # PDPD Op type
+        'background_label': background,
+        'score_threshold': score_threshold,  # the less, the more bbox kept.
+        'nms_top_k': nms_top_k,  # max_output_box_per_class
+        'nms_threshold': nms_threshold,  # the bigger, the more bbox kept.
+        'keep_top_k': keep_top_k,  # -1, keep all
+        'normalized': normalized,
+        'nms_eta': 1.0,
+        'return_index': True
+    }
+    NMS("multiclass_nms_lod_input", boxes, scores, pdpd_attrs, rois_num)
+
+
 if __name__ == "__main__":
     main()
     TEST1()
+    TestMulticlassNMSLoDInput()

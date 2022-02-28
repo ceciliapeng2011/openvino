@@ -47,7 +47,7 @@ def print_alike(arr, seperator_begin='{', seperator_end='}'):
 
 # bboxes shape (N, M, 4)
 # scores shape (N, C, M)
-def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
+def NMS(name: str, bboxes, scores, attrs: dict, rois_num=None, quite=True):
     import paddle as pdpd
     from ppdet.modeling import ops
     pdpd.enable_static()
@@ -63,30 +63,39 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
                                        dtype=scores.dtype,
                                        lod_level=1)
 
+        node_rois_num = None
+        if rois_num is not None:
+            node_rois_num = pdpd.static.data(name='rois_num',
+                                        shape=rois_num.shape,
+                                        dtype=rois_num.dtype,
+                                        lod_level=1)
+
         if attrs['nms_type'] is 'multiclass_nms3':
             nms_outputs = ops.multiclass_nms(bboxes=node_boxes,
-                                        scores=node_scores,
-                                        background_label=attrs['background_label'],
-                                        score_threshold=attrs['score_threshold'],
-                                        nms_top_k=attrs['nms_top_k'],
-                                        nms_threshold=attrs['nms_threshold'],
-                                        keep_top_k=attrs['keep_top_k'],
-                                        normalized=attrs['normalized'],
-                                        nms_eta=attrs['nms_eta'],
-                                        return_index=attrs['return_index'])
+                                             scores=node_scores,
+                                             background_label=attrs['background_label'],
+                                             score_threshold=attrs['score_threshold'],
+                                             nms_top_k=attrs['nms_top_k'],
+                                             nms_threshold=attrs['nms_threshold'],
+                                             keep_top_k=attrs['keep_top_k'],
+                                             normalized=attrs['normalized'],
+                                             nms_eta=attrs['nms_eta'],
+                                             return_index=attrs['return_index'],
+                                             return_rois_num=True,
+                                             rois_num=node_rois_num)
         else:
             nms_outputs = ops.matrix_nms(bboxes=node_boxes,
-                                    scores=node_scores,
-                                    score_threshold=attrs['score_threshold'],
-                                    post_threshold=attrs['post_threshold'],
-                                    nms_top_k=attrs['nms_top_k'],
-                                    keep_top_k=attrs['keep_top_k'],
-                                    use_gaussian=attrs['use_gaussian'],
-                                    gaussian_sigma=attrs['gaussian_sigma'],
-                                    background_label=attrs['background_label'],
-                                    normalized=attrs['normalized'],
-                                    return_index=attrs['return_index'],
-                                    return_rois_num=attrs['return_rois_num'])
+                                         scores=node_scores,
+                                         score_threshold=attrs['score_threshold'],
+                                         post_threshold=attrs['post_threshold'],
+                                         nms_top_k=attrs['nms_top_k'],
+                                         keep_top_k=attrs['keep_top_k'],
+                                         use_gaussian=attrs['use_gaussian'],
+                                         gaussian_sigma=attrs['gaussian_sigma'],
+                                         background_label=attrs['background_label'],
+                                         normalized=attrs['normalized'],
+                                         return_index=attrs['return_index'],
+                                         return_rois_num=attrs['return_rois_num'])
         # output of NMS is mix of int and float. To make it easy for op_fuzzy unittest, cast int output to float.
         output = []
         for x in nms_outputs:
@@ -101,7 +110,11 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
         exe.run(pdpd.static.default_startup_program())
 
         fetch_vars = [x for x in output if x is not None]
-        output_lod = exe.run(feed={'bboxes': bboxes, 'scores': scores},
+        feed_dict = {'bboxes': bboxes, 'scores': scores}
+        if rois_num is not None:
+             feed_dict['rois_num'] = rois_num
+
+        output_lod = exe.run(feed=feed_dict,
                              fetch_list=fetch_vars,
                              return_numpy=False)
 
@@ -120,9 +133,9 @@ def NMS(name: str, bboxes, scores, attrs: dict, quite=True):
         output_np = [out, nms_rois_num, index]
         saveModel(name,
                   exe,
-                  feedkeys=['bboxes', 'scores'],
+                  feedkeys=list(feed_dict.keys()),
                   fetchlist=fetch_vars,
-                  inputs=[bboxes, scores],
+                  inputs=list(feed_dict.values()),
                   outputs=[x for x in output_np if x is not None],
                   target_dir=sys.argv[1])
 
