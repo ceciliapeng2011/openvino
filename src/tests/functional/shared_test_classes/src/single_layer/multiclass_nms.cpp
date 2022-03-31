@@ -102,12 +102,8 @@ void MulticlassNmsLayerTest::generate_inputs(const std::vector<ngraph::Shape>& t
                     array.push_back(std::rand() % max_num);
                 }
                 array.push_back(max_num);
-                std::cout << std::endl;
-                for (auto x : array) std::cout << x << ' ';
 
                 std::sort(array.begin(), array.end());
-                std::cout << std::endl;
-                for (auto x : array) std::cout << x << ' ';
 
                 for (auto i = 0; i < num; i++) {
                     results[i] = array[i+1] - array[i];
@@ -129,19 +125,6 @@ void MulticlassNmsLayerTest::generate_inputs(const std::vector<ngraph::Shape>& t
                     dataPtr[i] = static_cast<int64_t>(roisnum[i]);
                 }
             }
-
-            // debug
-            size_t numBatches = targetInputStaticShapes[i][0];
-            std::vector<size_t> numPerBatch(numBatches);
-            if (tensor.get_element_type() == ov::element::i32) {
-                auto buffer = tensor.data<int32_t>();
-                std::copy_n(buffer, numBatches, numPerBatch.begin());
-            } else {
-                auto buffer = tensor.data<int64_t>();
-                std::copy_n(buffer, numBatches, numPerBatch.begin());
-            }
-            size_t total = std::accumulate(numPerBatch.begin(), numPerBatch.end(), 0);
-            std::cout << "\n#######input roisnum = " << Shape(numPerBatch) << ", sumup = " << total << ", M = " << targetInputStaticShapes[0][1] << std::endl;
         }
 
         inputs.insert({funcInput.get_node_shared_ptr(), tensor});
@@ -205,11 +188,11 @@ void MulticlassNmsLayerTest::compare(const std::vector<ov::Tensor> &expectedOutp
                 auto buffer = actual.data<int64_t>();
                 std::copy_n(buffer, numBatches, numPerBatch.begin());
             }
+
+            break;
         }
     }
-
-    std::cout << "batchIndex = " << batchIndex << "numBatches = " << numBatches << "maxOutputBoxesPerBatch =" <<
-    maxOutputBoxesPerBatch << "numPerBatch = " << Shape(numPerBatch) << std::endl;
+    ASSERT_TRUE(batchIndex > -1) << "Expect to get output index for 'selected_num'";
 
     // reserve order could make sure output 'selected_num' get checked first.
     for (int outputIndex = static_cast<int>(expectedOutputs.size()) - 1; outputIndex >= 0; outputIndex--) {
@@ -220,10 +203,6 @@ void MulticlassNmsLayerTest::compare(const std::vector<ov::Tensor> &expectedOutp
 
         const auto expected_shape = expected.get_shape();
         const auto actual_shape = actual.get_shape();
-
-        std::cout << "outputIndex = " << outputIndex << std::endl;
-        std::cout << " expected (" << expected.get_size() << ", " << expected.get_shape() << "," << expected.get_element_type() << ")" << std::endl;
-        std::cout << " actual (" << actual.get_size() << ", " << actual.get_shape() << "," << actual.get_element_type() << ")" << std::endl;
 
         // Compare Selected Outputs & Selected Indices
         if (outputIndex != batchIndex) {
@@ -317,31 +296,6 @@ void MulticlassNmsLayerTest::compare(const std::vector<ov::Tensor> &expectedOutp
             }
         } else {
             ASSERT_TRUE(expected_shape == actual_shape) << "Expected the same shape, got: " << expected_shape << " and " << actual_shape;
-
-            // debug
-            {
-                std::vector<size_t> expected_data(expected_shape[0]);
-                if (expected.get_element_type() == ov::element::i32) {
-                    auto buffer = expected.data<int32_t>();
-                    std::copy_n(buffer, expected_shape[0], expected_data.begin());
-                } else {
-                    auto buffer = expected.data<int64_t>();
-                    std::copy_n(buffer, expected_shape[0], expected_data.begin());
-                }
-                size_t total = std::accumulate(expected_data.begin(), expected_data.end(), 0);
-                std::cout << "\n>>>>output expected selected_num = " << Shape(expected_data) << ", sumup = " << total << std::endl;
-
-                std::vector<size_t> actual_data(actual_shape[0]);
-                if (actual.get_element_type() == ov::element::i32) {
-                    auto buffer = actual.data<int32_t>();
-                    std::copy_n(buffer, actual_shape[0], actual_data.begin());
-                } else {
-                    auto buffer = actual.data<int64_t>();
-                    std::copy_n(buffer, actual_shape[0], actual_data.begin());
-                }
-                size_t total2 = std::accumulate(actual_data.begin(), actual_data.end(), 0);
-                std::cout << "\n>>>>output actual selected_num = " << Shape(actual_data) << ", sumup = " << total2 << std::endl;
-            }
 
             const auto& precision = actual.get_element_type();
             size_t size = expected.get_size();
