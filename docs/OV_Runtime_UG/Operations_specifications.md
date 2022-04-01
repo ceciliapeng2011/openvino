@@ -112,7 +112,6 @@
    openvino_docs_ops_activation_Mish_4
    openvino_docs_ops_arithmetic_Mod_1
    openvino_docs_ops_sort_MulticlassNonMaxSuppression_8
-   openvino_docs_ops_sort_MulticlassNonMaxSuppression_9
    openvino_docs_ops_arithmetic_Multiply_1
    openvino_docs_ops_arithmetic_Negative_1
    openvino_docs_ops_sort_NonMaxSuppression_1
