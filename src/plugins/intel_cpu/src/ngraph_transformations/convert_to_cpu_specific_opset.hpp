@@ -31,9 +31,12 @@ namespace intel_cpu {
 inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphFunc) {
     RUN_ON_FUNCTION_SCOPE(ConvertToCPUSpecificOpset);
     ngraph::pass::Manager manager;
-    manager.register_pass<ov::pass::Serialize>("before_augrucompose.xml", "before_augrucompose.bin"); // debugging
-    manager.register_pass<AUGRUCellCompose>();
-    manager.register_pass<ov::pass::Serialize>("after_augrucompose.xml", "after_augrucompose.bin"); // debugging
+    if (std::getenv("FUSEAUGRU")) {
+        //manager.register_pass<ov::pass::Serialize>("before_augrucompose.xml", "before_augrucompose.bin"); // debugging
+        manager.register_pass<AUGRUCellCompose>();
+        manager.register_pass<FuseAUGRUCell>();
+        //manager.register_pass<ov::pass::Serialize>("after_augrucompose.xml", "after_augrucompose.bin"); // debugging
+    }
 
     manager.register_pass<ConvertMatMulToFC>();
     manager.register_pass<AlignMatMulInputRanks>();

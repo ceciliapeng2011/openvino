@@ -15,5 +15,10 @@ public:
     AUGRUCellCompose();
 };
 
+class FuseAUGRUCell : public ngraph::pass::MatcherPass {
+public:
+    OPENVINO_RTTI("FuseAUGRUCell", "0");
+    FuseAUGRUCell();
+};
 }   // namespace intel_cpu
 }   // namespace ov
