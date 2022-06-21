@@ -1005,9 +1005,11 @@ void Graph::Infer(InferRequestBase* request) {
 
     dnnl::stream stream(eng);
 
+    static int32_t ninfer_count = 0;
+
     for (const auto& node : executableGraphNodes) {
         VERBOSE(node, config.verbose);
-        PERF(node, config.collectPerfCounters);
+        PERF(node, config.collectPerfCounters && (ninfer_count>0));
 
         if (request)
             request->ThrowIfCanceled();
@@ -1015,6 +1017,7 @@ void Graph::Infer(InferRequestBase* request) {
     }
 
     if (infer_count != -1) infer_count++;
+    ninfer_count++;
 }
 
 void Graph::VisitNode(NodePtr node, std::vector<NodePtr>& sortedNodes) {
