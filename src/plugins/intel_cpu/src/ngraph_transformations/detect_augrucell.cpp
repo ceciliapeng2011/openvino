@@ -134,7 +134,7 @@ ov::intel_cpu::AUGRUCellCompose::AUGRUCellCompose() {
         W->set_friendly_name("W");
         const auto R = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {1.0});
         R->set_friendly_name("R");
-        const auto B = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {0.0});
+        const auto B = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size}, {0.0});
         B->set_friendly_name("B");
 
         //

@@ -371,9 +371,11 @@ void RNN::initCell() {
                 "; Hidden state input: " << getInputShapeAtPort(1).toString() << "; Hidden state output: " << getOutputShapeAtPort(0).toString();
     }
 
-    const Shape shapeA{{N.minVal, 1}, {N.maxVal, 1}};
-    if (getInputShapeAtPort(2).isStatic() && getInputShapeAtPort(2) != shapeA) {
-        THROW_ERROR << "has incorrect input shapes. Attention shape: " << getInputShapeAtPort(2).toString();
+    if (is_augru) {
+        const Shape shapeA{{N.minVal, 1}, {N.maxVal, 1}};
+        if (getInputShapeAtPort(2).isStatic() && getInputShapeAtPort(2) != shapeA) {
+            THROW_ERROR << "has incorrect input shapes. Attention shape: " << getInputShapeAtPort(2).toString();
+        }
     }
 
     if (S == 2) {
