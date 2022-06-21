@@ -15,10 +15,13 @@
 #include "convert_to_power_static.hpp"
 #include "convert_to_leaky_relu.hpp"
 #include "convert_to_swish_cpu.hpp"
+#include "detect_augrucell.hpp"
 #include "transformations/convert_precision.hpp"
 #include "transformations/utils/utils.hpp"
 #include "rnn_sequences_optimization.hpp"
 #include "transformations/common_optimizations/reshape_sequence_fusion.hpp"
+
+#include <ngraph/pass/serialize.hpp>
 
 #include "itt.hpp"
 
@@ -28,6 +31,10 @@ namespace intel_cpu {
 inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphFunc) {
     RUN_ON_FUNCTION_SCOPE(ConvertToCPUSpecificOpset);
     ngraph::pass::Manager manager;
+    manager.register_pass<ov::pass::Serialize>("before_augrucompose.xml", "before_augrucompose.bin"); // debugging
+    manager.register_pass<AUGRUCellCompose>();
+    manager.register_pass<ov::pass::Serialize>("after_augrucompose.xml", "after_augrucompose.bin"); // debugging
+
     manager.register_pass<ConvertMatMulToFC>();
     manager.register_pass<AlignMatMulInputRanks>();
     manager.register_pass<ConvertTileToSeqTiles>();

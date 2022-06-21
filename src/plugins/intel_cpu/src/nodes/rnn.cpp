@@ -11,6 +11,7 @@
 #include <dnnl_extension_utils.h>
 #include "memory_desc/dnnl_blocked_memory_desc.h"
 #include <common/primitive_hashing_utils.hpp>
+#include "ngraph_transformations/op/augru_cpu.hpp"
 
 #include <ngraph/node.hpp>
 
@@ -62,6 +63,13 @@ static dnnl::algorithm ie2dnnl(const std::shared_ptr<const ov::Node>& op) {
         else
             return dnnl::algorithm::vanilla_gru;
     } else if (one_of(op->get_type_info(),
+            AUGRUCellNode::get_type_info_static())) {
+        auto gruCellOp = ov::as_type_ptr<const AUGRUCellNode>(op);
+        if (gruCellOp && gruCellOp->get_linear_before_reset())
+            return dnnl::algorithm::lbr_augru;
+        else
+            return dnnl::algorithm::vanilla_augru;
+    }else if (one_of(op->get_type_info(),
             ov::op::v0::LSTMCell::get_type_info_static(),
             ov::op::v4::LSTMCell::get_type_info_static(),
             ov::op::v0::LSTMSequence::get_type_info_static(),
@@ -172,6 +180,7 @@ bool RNN::isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::s
     try {
         if (!one_of(op->get_type_info(),
                 ov::op::v3::GRUCell::get_type_info_static(),
+                AUGRUCellNode::get_type_info_static(),
                 ov::op::v0::LSTMCell::get_type_info_static(),
                 ov::op::v4::LSTMCell::get_type_info_static(),
                 ov::op::v0::RNNCell::get_type_info_static(),
@@ -618,7 +627,7 @@ void RNN::copyWeightsData() {
      *   B - [gates, out_state_size]
      *
      * DNNL format:
-     *   W - [1, 1, in_date_size,  gates, out_state_size]
+     *   W - [1, 1, in_date_size,  gates, out_state_size]  {Layers, Direction, Channel_in, Gates, Channel_hiddenstate};
      *   R - [1, 1, in_state_size, gates, out_state_size]
      *   B - [gates, out_state_size]
      *
