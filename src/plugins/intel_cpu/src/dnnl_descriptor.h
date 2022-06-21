@@ -46,8 +46,14 @@ public:
     explicit DnnlDesriptor(std::shared_ptr<dnnl::gru_forward::desc> desc);
     operator std::shared_ptr<dnnl::gru_forward::desc>();
 
+    explicit DnnlDesriptor(std::shared_ptr<dnnl::augru_forward::desc> desc);
+    operator std::shared_ptr<dnnl::augru_forward::desc>();    
+
     explicit DnnlDesriptor(std::shared_ptr<dnnl::lbr_gru_forward::desc> desc);
     operator std::shared_ptr<dnnl::lbr_gru_forward::desc>();
+
+    explicit DnnlDesriptor(std::shared_ptr<dnnl::lbr_augru_forward::desc> desc);
+    operator std::shared_ptr<dnnl::lbr_augru_forward::desc>();    
 
     explicit DnnlDesriptor(std::shared_ptr<dnnl::eltwise_forward::desc> desc);
     operator std::shared_ptr<dnnl::eltwise_forward::desc>();

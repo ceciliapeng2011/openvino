@@ -59,6 +59,8 @@ private:
     /** Specify mode Cell or Seq. true - Cell, false - Seq */
     bool is_cell = false;
 
+    bool is_augru = false;
+
     /** Native order if [batch, seq, data], other case is [seq, batch, data] */
     bool nativeOrder = true;
 
@@ -94,7 +96,7 @@ private:
     Interval T;     /**< Sequence value */
     size_t DC = 0;  /**< Input data channel size */
     size_t SC = 0;  /**< State channel size value */
-    size_t G = 0;   /**< Gate size. LSTM - 4, GRU - 3, RNN - 1 */
+    size_t G = 0;   /**< Gate size. LSTM - 4, AUGRU & GRU - 3, RNN - 1 */
     size_t Gb = 0;  /**< Gate size for biases. Gb = GRU_lbr ? G+1 : G */
     size_t S = 2;   /**< Num of state. LSTM - 2, GRU & RNN - 1 */
     const size_t L = 1;   /**< What is it??. Constant for onednn impl */
@@ -107,7 +109,8 @@ private:
     enum RNNInOutKind {
         Layer       = 0,
         HiddenState = 1,
-        CellState   = 2
+        CellState   = 2,
+        Attention   = 2
     };
 
     size_t wIdx = 0;
