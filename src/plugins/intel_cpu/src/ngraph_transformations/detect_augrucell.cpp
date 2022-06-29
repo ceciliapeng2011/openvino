@@ -61,16 +61,34 @@ ov::intel_cpu::AUGRUCellCompose::AUGRUCellCompose() {
         std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         NodeVector new_ops;
 
+        // try the left branch
         auto Ht_1 = mul_1->input_value(1); //Ht-1 (batch_size, hidden_size)
         std::shared_ptr<Concat> concat_1 = nullptr;
         for (const auto&input : Ht_1.get_target_inputs()) {
             const auto& node = input.get_node()->shared_from_this();
             if (std::dynamic_pointer_cast<Concat>(node)) {
                 concat_1 = std::dynamic_pointer_cast<Concat>(node);
+                break;
             }
         }
-        if (!concat_1)
+        if (!concat_1) { // try the right branch
+            Ht_1 = mul_2->input_value(1); //Ht-1 (batch_size, hidden_size)
+            for (const auto&input : Ht_1.get_target_inputs()) {
+                const auto& node = input.get_node()->shared_from_this();
+                if (std::dynamic_pointer_cast<Concat>(node)) {
+                    concat_1 = std::dynamic_pointer_cast<Concat>(node);
+                    // swap mul_1, mul_2
+                    auto tmp = mul_1;
+                    mul_1 = mul_2;
+                    mul_2 = tmp;
+                    break;
+                }
+            }
+        }
+
+        if (!concat_1) {
             return false;
+        }
         
         std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto Xt = concat_1->input_value(0); //Xt (batch_size, input_size)
