@@ -46,19 +46,19 @@ ov::intel_cpu::AUGRUCellCompose::AUGRUCellCompose() {
     auto H_out_ptn = pattern::wrap_type<Add>({mul1_ptn, mul2_ptn});
 
     matcher_pass_callback callback = [=](pattern::Matcher &m) {
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto H_out = std::dynamic_pointer_cast<Add>(m.get_match_root());
         if (!H_out)
             return false;
 
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         const auto& pattern_map = m.get_pattern_value_map();
         auto mul_1 = pattern_map.at(mul1_ptn).get_node_shared_ptr();
         auto mul_2 = pattern_map.at(mul2_ptn).get_node_shared_ptr();
         if (!mul_1 || !mul_2)
             return false;
 
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         NodeVector new_ops;
 
         auto Ht_1 = mul_1->input_value(1); //Ht-1 (batch_size, hidden_size)
@@ -72,7 +72,7 @@ ov::intel_cpu::AUGRUCellCompose::AUGRUCellCompose() {
         if (!concat_1)
             return false;
         
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto Xt = concat_1->input_value(0); //Xt (batch_size, input_size)
 
         //
@@ -80,19 +80,31 @@ ov::intel_cpu::AUGRUCellCompose::AUGRUCellCompose() {
         if (!hat_Ut)
             return false;
 
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         // node substrace is transformed with "multiply + add" instead... why?
+        // original: (1 - At) * Ut
         //auto Aminus = std::dynamic_pointer_cast<Subtract>(hat_Ut->get_input_node_shared_ptr(0));
         // if (!Aminus)
         //     return false;
         //auto A = Aminus->input_value(1); // Activation (batch_size, 1)
+        // transformed to: ( 1 + (-1)*At ) * Ut
+        Output<Node> A;
         const auto Add_ = std::dynamic_pointer_cast<Add>(hat_Ut->get_input_node_shared_ptr(0));
         const auto Aminus = std::dynamic_pointer_cast<Multiply>(Add_->get_input_node_shared_ptr(1));
-        if (!Aminus)
-            return false;
-        auto A = Aminus->input_value(0); // Activation (batch_size, 1)
+        if (Aminus) {
+            A = Aminus->input_value(0); // Activation (batch_size, 1)
+        } else {
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            const auto reshape_ = std::dynamic_pointer_cast<Reshape>(Add_->get_input_node_shared_ptr(1));
+            if (!reshape_) return false;
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            const auto A_ = std::dynamic_pointer_cast<Multiply>(reshape_->get_input_node_shared_ptr(0));
+            if (!A_) return false;
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            A = std::make_shared<Reshape>(A_->input_value(0), reshape_->input_value(1), false);
+        }
 
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         // fake W, R, B here  
         const std::size_t hidden_size = 36;
         const std::size_t input_size = hidden_size;
@@ -125,12 +137,12 @@ ov::intel_cpu::FuseAUGRUCell::FuseAUGRUCell() {
                                                                 pattern::any_input(pattern::rank_equals(2)),
                                                                 pattern::any_input(pattern::rank_equals(2))});
     matcher_pass_callback callback = [=](pattern::Matcher &m) {
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto H_out = std::dynamic_pointer_cast<snippets::op::Subgraph>(m.get_match_root());
         if (!H_out)
             return false;
 
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         NodeVector new_ops;
 
         auto A = H_out->input_value(0); // Activation (batch_size, 1)
@@ -145,17 +157,17 @@ ov::intel_cpu::FuseAUGRUCell::FuseAUGRUCell() {
         if (!concat_1)
             return false;
         
-        //std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto Xt = concat_1->input_value(0); //Xt (batch_size, input_size)
 
         // fake W, R, B here  
         const std::size_t hidden_size = 36;
         const std::size_t input_size = hidden_size;
-        const auto W = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {1.0});
+        static const auto W = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {1.0});
         W->set_friendly_name("W");
-        const auto R = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {1.0});
+        static const auto R = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size, input_size}, {1.0});
         R->set_friendly_name("R");
-        const auto B = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size}, {0.0});
+        static const auto B = Constant::create(Xt.get_element_type(), Shape{3 * hidden_size}, {0.0});
         B->set_friendly_name("B");
 
         //
