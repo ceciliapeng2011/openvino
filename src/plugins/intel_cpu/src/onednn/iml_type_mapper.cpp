@@ -62,6 +62,7 @@ const char* impl_type_to_string(impl_desc_type type) {
 } while (0)
     CASE(unknown);
     CASE(undef);
+    CASE(ref);
     CASE(ref_any);
     CASE(reorder);
     CASE(gemm_any);
@@ -110,7 +111,7 @@ const char* impl_type_to_string(impl_desc_type type) {
     CASE(brgemm_avx512_amx);
 
 #undef CASE
-    return "unknown";
+    return "UNKNOWN";
 }
 
 }   // namespace intel_cpu

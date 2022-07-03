@@ -4,6 +4,7 @@
 
 #include "detect_augrucell.hpp"
 #include "op/augru_cpu.hpp"
+#include "op/augruseq_cpu.hpp"
 #include <numeric>
 #include <ngraph/opsets/opset9.hpp>
 #include <ngraph/rt_info.hpp>
@@ -12,6 +13,7 @@
 #include "snippets/op/subgraph.hpp"
 
 #include "itt.hpp"
+#include "transformations/utils/utils.hpp"
 
 using namespace ngraph;
 using namespace opset9;
@@ -200,5 +202,132 @@ ov::intel_cpu::FuseAUGRUCell::FuseAUGRUCell() {
     };
 
     auto m = std::make_shared<pattern::Matcher>(H_out_ptn, matcher_name);
+    register_matcher(m, callback);
+}
+
+
+ov::intel_cpu::FuseAUGRUCell2Sequence::FuseAUGRUCell2Sequence() {
+    MATCHER_SCOPE(FuseAUGRUCell2Sequence);
+    // std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+    auto is_supported_augru_cell = [](const std::shared_ptr<Node>& n) {
+        // std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        // std::cout << "got: " << n->get_friendly_name() << ", type: " << n->get_type_name() << 
+        // ov::is_type<ov::intel_cpu::AUGRUCellNode>(n) << ov::is_type<RNNCell>(n) << n->get_type_info().get_version() <<
+        // ("cpu_plugin_opset"==n->get_type_info().get_version()) << ("RNNCell" == std::string(n->get_type_name())) << std::endl;
+        return "cpu_plugin_opset"==n->get_type_info().get_version() && "RNNCell" == std::string(n->get_type_name());//pattern::has_class<ov::intel_cpu::AUGRUCellNode>()(n) || pattern::has_class<RNNCell>()(n);
+    };
+    auto any_augru = std::make_shared<pattern::op::Label>(pattern::any_input(), is_supported_augru_cell);
+
+    matcher_pass_callback callback = [=](pattern::Matcher &m) {
+        const auto sequence_len = 100;
+        const auto num_directions = 1;
+        NodeVector old_ops;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+
+        auto first_augru_cell = std::dynamic_pointer_cast<ov::intel_cpu::AUGRUCellNode>(m.get_match_root());
+        if (!first_augru_cell)
+            return false;
+        old_ops.push_back(first_augru_cell);
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        std::cout << "the first AUGRUCell got: " << first_augru_cell->get_friendly_name() << std::endl;
+
+        // X [batch_size, seq_length, input_size]
+        // split -> reshape -> augrucell(in_port:0)
+        auto x_reshape = std::dynamic_pointer_cast<Reshape>(first_augru_cell->input_value(0).get_node_shared_ptr());
+        if (!x_reshape)
+            return false;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        auto x_split = std::dynamic_pointer_cast<Split>(x_reshape->input_value(0).get_node_shared_ptr());
+        if (!x_split)
+            return false;
+        old_ops.push_back(x_split);
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        if (x_split->get_output_size() != sequence_len) return false;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        auto X = x_split->input_value(0);
+
+        // initial_hidden_state [batch_size, num_directions, hidden_size]
+        // const -> augrucell(in_port:1)
+        auto initial_hidden_state = std::make_shared<Unsqueeze>(first_augru_cell->input_value(1), Constant::create(ngraph::element::i32, Shape{1}, {1}));
+
+        // A [batch_size, seq_length, 1]
+        // VariadicSplit -> subgraph -> reshape -> augrucell (in_port: 2)
+        auto atten_reshape = std::dynamic_pointer_cast<Reshape>(first_augru_cell->input_value(2).get_node_shared_ptr());
+        if (!atten_reshape)
+            return false;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        auto atten_sub = std::dynamic_pointer_cast<snippets::op::Subgraph>(atten_reshape->input_value(0).get_node_shared_ptr());
+        if (!atten_sub)
+            return false;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        auto atten_split = std::dynamic_pointer_cast<VariadicSplit>(atten_sub->input_value(0).get_node_shared_ptr());
+        if (!atten_split)
+            return false;
+        old_ops.push_back(atten_split);                  
+        if (atten_split->get_output_size() != sequence_len) return false;
+        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+        auto A = atten_split->input_value(0);
+
+        // fake W, R, B here  
+        const std::size_t hidden_size = 36;
+        const std::size_t input_size = hidden_size;
+        const auto W = Constant::create(X.get_element_type(), Shape{num_directions, 3 * hidden_size, input_size}, {1.0});
+        W->set_friendly_name("W");
+        const auto R = Constant::create(X.get_element_type(), Shape{num_directions, 3 * hidden_size, input_size}, {1.0});
+        R->set_friendly_name("R");
+        const auto B = Constant::create(X.get_element_type(), Shape{num_directions, 3 * hidden_size}, {0.0});
+        B->set_friendly_name("B");
+
+        // seq_lengths [batch_size]
+        const size_t batch_dim = 0;
+        auto batch_dimension = ngraph::op::util::node_to_get_shape_value_of_indices_from_shape_source(
+            X,
+            {batch_dim});
+        auto seq_lengths_scalar = Constant::create(ngraph::element::i32, {}, {sequence_len});
+        auto seq_lengths = ngraph::op::util::make_try_fold<Broadcast>(seq_lengths_scalar, batch_dimension);         
+
+        const auto augru_sequence = std::make_shared<ov::intel_cpu::AUGRUSequenceNode>(X,
+                                                                                initial_hidden_state,
+                                                                                A,
+                                                                                seq_lengths,
+                                                                                W,
+                                                                                R,
+                                                                                B,
+                                                                                first_augru_cell->get_hidden_size(),
+                                                                                ngraph::op::RecurrentSequenceDirection::FORWARD,
+                                                                                first_augru_cell->get_activations(),
+                                                                                first_augru_cell->get_activations_alpha(),
+                                                                                first_augru_cell->get_activations_beta(),
+                                                                                first_augru_cell->get_clip(),
+                                                                                first_augru_cell->get_linear_before_reset());
+
+        // iteratedly grab all cells
+        std::function <std::shared_ptr<ov::intel_cpu::AUGRUCellNode> (std::shared_ptr<ov::intel_cpu::AUGRUCellNode>)> get_sequence_end;
+        get_sequence_end = [&get_sequence_end](std::shared_ptr<ov::intel_cpu::AUGRUCellNode> augru_c) {
+            auto childs = augru_c->output(0).get_target_inputs();            
+            for (auto &child : childs) {
+                const auto c = child.get_node()->shared_from_this();
+                const auto next_cell = std::dynamic_pointer_cast<ov::intel_cpu::AUGRUCellNode>(c);
+                if (next_cell)
+                    return get_sequence_end(next_cell);
+            }
+            // no child of augrucellnode type. then itself is the last.
+            return augru_c;
+        };
+
+        auto last_augru_cell = get_sequence_end(first_augru_cell);
+        std::cout << "the last AUGRUCell got: " << last_augru_cell->get_friendly_name() << std::endl;   
+        old_ops.push_back(last_augru_cell);
+
+        //        
+        auto squeeze_sequence = std::make_shared<Squeeze>(augru_sequence->output(1), Constant::create(ngraph::element::i32, Shape{1}, {1}));
+        squeeze_sequence->set_friendly_name(last_augru_cell->get_friendly_name());
+
+        replace_node(last_augru_cell, squeeze_sequence);
+        copy_runtime_info(old_ops, squeeze_sequence);
+        return true;
+    };
+
+    auto m = std::make_shared<pattern::Matcher>(any_augru, matcher_name);
     register_matcher(m, callback);
 }

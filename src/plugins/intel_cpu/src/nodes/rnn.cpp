@@ -12,6 +12,7 @@
 #include "memory_desc/dnnl_blocked_memory_desc.h"
 #include <common/primitive_hashing_utils.hpp>
 #include "ngraph_transformations/op/augru_cpu.hpp"
+#include "ngraph_transformations/op/augruseq_cpu.hpp"
 
 #include <ngraph/node.hpp>
 
@@ -63,13 +64,16 @@ static dnnl::algorithm ie2dnnl(const std::shared_ptr<const ov::Node>& op) {
         else
             return dnnl::algorithm::vanilla_gru;
     } else if (one_of(op->get_type_info(),
-            AUGRUCellNode::get_type_info_static())) {
+            AUGRUCellNode::get_type_info_static(),
+            AUGRUSequenceNode::get_type_info_static())) {
         auto gruCellOp = ov::as_type_ptr<const AUGRUCellNode>(op);
-        if (gruCellOp && gruCellOp->get_linear_before_reset())
+        auto gruSeqOp = ov::as_type_ptr<const AUGRUSequenceNode>(op);
+        if ((gruCellOp && gruCellOp->get_linear_before_reset()) ||
+                (gruSeqOp && gruSeqOp->get_linear_before_reset()))
             return dnnl::algorithm::lbr_augru;
         else
             return dnnl::algorithm::vanilla_augru;
-    }else if (one_of(op->get_type_info(),
+    } else if (one_of(op->get_type_info(),
             ov::op::v0::LSTMCell::get_type_info_static(),
             ov::op::v4::LSTMCell::get_type_info_static(),
             ov::op::v0::LSTMSequence::get_type_info_static(),
@@ -189,6 +193,7 @@ bool RNN::isSupportedOperation(const std::shared_ptr<const ov::Node>& op, std::s
         if (!one_of(op->get_type_info(),
                 ov::op::v3::GRUCell::get_type_info_static(),
                 AUGRUCellNode::get_type_info_static(),
+                AUGRUSequenceNode::get_type_info_static(),
                 ov::op::v0::LSTMCell::get_type_info_static(),
                 ov::op::v4::LSTMCell::get_type_info_static(),
                 ov::op::v0::RNNCell::get_type_info_static(),
@@ -280,7 +285,8 @@ RNN::RNN(const std::shared_ptr<ov::Node>& op, const dnnl::engine& eng, WeightsSh
     });
 
     is_augru = one_of(op->get_type_info(),
-            AUGRUCellNode::get_type_info_static());
+            AUGRUCellNode::get_type_info_static(),
+            AUGRUSequenceNode::get_type_info_static());
 
     is_cell = one_of(op->get_type_info(),
             ov::op::v0::RNNCell::get_type_info_static(),
@@ -293,8 +299,10 @@ RNN::RNN(const std::shared_ptr<ov::Node>& op, const dnnl::engine& eng, WeightsSh
                ov::op::v0::RNNCell::get_type_info_static(),
                ov::op::v3::GRUCell::get_type_info_static())) {
         wIdx = 2; rIdx = 3; bIdx = 4;
-    } else if (is_augru) {
+    } else if (is_augru && is_cell) {
         wIdx = 3; rIdx = 4; bIdx = 5;        
+    } else if (is_augru && !is_cell) {
+        wIdx = 4; rIdx = 5; bIdx = 6;        
     } else if (one_of(op->get_type_info(),
                       ov::op::v5::RNNSequence::get_type_info_static(),
                       ov::op::v0::LSTMCell::get_type_info_static(),
@@ -459,13 +467,17 @@ void RNN::initSequence() {
         THROW_ERROR << "has incorrect number of output ports: " << getOriginalOutputsNumber();
 
     T = {inDataShape.getMinDims()[1], inDataShape.getMaxDims()[1]};
-    if (cell_type == algorithm::vanilla_lstm)
+    if (cell_type == algorithm::vanilla_lstm || is_augru)
         DC = getInputShapeAtPort(4).getDims()[2];
     else
         DC = getInputShapeAtPort(3).getDims()[2];
 
     // layer input plus states
-    inDataDescs.reserve(S + 1);
+    if (haveAttention(cell_type)) {
+        inDataDescs.reserve(S + 2);
+    } else {
+        inDataDescs.reserve(S + 1);
+    }
     outDataDescs.reserve(S + 1);
 }
 
@@ -522,6 +534,11 @@ void RNN::fillSequenceDesc() {
         else
             inCandidate.emplace_back(std::make_shared<DnnlBlockedMemoryDesc>(shapeNDSC, memory::data_type::f32, memory::format_tag::ntc));
     }
+
+    if (haveAttention(cell_type)) {
+        Shape shapeAttn{{N.minVal, T.minVal, 1}, {N.maxVal, T.maxVal, 1}};
+        inCandidate.emplace_back(std::make_shared<DnnlBlockedMemoryDesc>(shapeAttn, dataType, memory::format_tag::ntc));
+    }    
 
     inCandidate.emplace_back(std::make_shared<DnnlBlockedMemoryDesc>(Shape{VectorDims{N.minVal}, VectorDims{N.maxVal}},
             memory::data_type::s32, memory::format_tag::x)); // sequence lengths

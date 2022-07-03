@@ -36,6 +36,10 @@ inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphF
         manager.register_pass<AUGRUCellCompose>();
         manager.register_pass<FuseAUGRUCell>();
         //manager.register_pass<ov::pass::Serialize>("after_augrucompose.xml", "after_augrucompose.bin"); // debugging
+        if (std::getenv("FUSEAUGRUSEQ")) {
+            manager.register_pass<FuseAUGRUCell2Sequence>();
+            //manager.register_pass<ov::pass::Serialize>("after_fuseaugrucell2sequence.xml", "after_fuseaugrucell2sequence.bin"); // debugging
+        }
     }
 
     manager.register_pass<ConvertMatMulToFC>();

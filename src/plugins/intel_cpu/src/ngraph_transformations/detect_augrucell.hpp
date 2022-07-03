@@ -20,5 +20,11 @@ public:
     OPENVINO_RTTI("FuseAUGRUCell", "0");
     FuseAUGRUCell();
 };
+
+class FuseAUGRUCell2Sequence : public ngraph::pass::MatcherPass {
+public:
+    OPENVINO_RTTI("FuseAUGRUCell2Sequence", "0");
+    FuseAUGRUCell2Sequence();
+};
 }   // namespace intel_cpu
 }   // namespace ov
