@@ -251,22 +251,32 @@ ov::intel_cpu::FuseAUGRUCell2Sequence::FuseAUGRUCell2Sequence() {
         auto initial_hidden_state = std::make_shared<Unsqueeze>(first_augru_cell->input_value(1), Constant::create(ngraph::element::i32, Shape{1}, {1}));
 
         // A [batch_size, seq_length, 1]
-        // VariadicSplit -> subgraph -> reshape -> augrucell (in_port: 2)
+        // VariadicSplit [-> subgraph] -> reshape -> augrucell (in_port: 2)
+        Output<Node> A;
         auto atten_reshape = std::dynamic_pointer_cast<Reshape>(first_augru_cell->input_value(2).get_node_shared_ptr());
         if (!atten_reshape)
             return false;
         std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
         auto atten_sub = std::dynamic_pointer_cast<snippets::op::Subgraph>(atten_reshape->input_value(0).get_node_shared_ptr());
-        if (!atten_sub)
-            return false;
-        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
-        auto atten_split = std::dynamic_pointer_cast<VariadicSplit>(atten_sub->input_value(0).get_node_shared_ptr());
-        if (!atten_split)
-            return false;
-        old_ops.push_back(atten_split);                  
-        if (atten_split->get_output_size() != sequence_len) return false;
-        std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
-        auto A = atten_split->input_value(0);
+        if (atten_sub) {
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            auto atten_split = std::dynamic_pointer_cast<VariadicSplit>(atten_sub->input_value(0).get_node_shared_ptr());
+            if (!atten_split)
+                return false;
+            old_ops.push_back(atten_split);
+            if (atten_split->get_output_size() != sequence_len) return false;
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            A = atten_split->input_value(0);
+        } else {
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            auto atten_split = std::dynamic_pointer_cast<VariadicSplit>(atten_reshape->input_value(0).get_node_shared_ptr());
+            if (!atten_split)
+                return false;
+            old_ops.push_back(atten_split);
+            if (atten_split->get_output_size() != sequence_len) return false;
+            std::cout << "################" <<  __FILE__ << ": " << __LINE__ << std::endl;
+            A = atten_split->input_value(0);
+        }
 
         // fake W, R, B here  
         const std::size_t hidden_size = 36;
