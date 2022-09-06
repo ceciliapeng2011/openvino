@@ -156,8 +156,6 @@ bool ngraph::pass::MOCTransformations::run_on_model(const std::shared_ptr<ngraph
     eliminations->add_matcher<ngraph::pass::EliminateUnsqueezeGather>();
     eliminations->add_matcher<ngraph::pass::NopElimination>(m_use_shapes /* do not use shape for elimination */);
     eliminations->set_name("ngraph::pass::CommonEliminations");
-    manager.register_pass<ov::pass::Serialize>("/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.xml",
-                                               "/home/itikhono/OpenVINO/tmp/dien_serialized/dien_split_concat.bin");
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     auto common_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();
