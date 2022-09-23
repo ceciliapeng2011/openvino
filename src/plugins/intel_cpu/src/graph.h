@@ -72,6 +72,12 @@ public:
         return graphNodes;
     }
 
+    void updateDynamicNodes() { // change to statics node executing mode
+        for (const auto& node : executableGraphNodes) {
+            node->updateDynamicNode(false);
+        }
+    }
+
     std::vector<NodePtr>& GetNodes() {
         return graphNodes;
     }

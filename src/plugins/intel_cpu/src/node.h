@@ -542,6 +542,10 @@ public:
         return isDynamic;
     }
 
+    void updateDynamicNode(const bool update) {
+        isDynamic = update;
+    }
+
     const Shape& getInputShapeAtPort(size_t port) const {
         if (inputShapes.size() <= port) {
             IE_THROW() << "Incorrect input port number for node " << getName();

@@ -620,6 +620,12 @@ void TensorIterator::executeDynamicImpl(dnnl::stream strm) {
         // on the last iteration we shouldn't reshape body inputs and init back edges
         if ((i + 1 != max_num_iter) && continue_cond)
             prepareDynamicBackEdges();
+
+        if (i == 0) {
+            if (getenv("WA_DYNAMICNODE")) { // change to statics node executing mode
+                sub_graph.updateDynamicNodes(false);
+            }
+        }
     }
 
     reshapeAndFillOutput(strm);
