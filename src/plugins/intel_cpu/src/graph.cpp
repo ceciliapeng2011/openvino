@@ -61,6 +61,9 @@ namespace intel_cpu {
 typedef std::unordered_set<EdgePtr> edge_cluster_t;
 typedef std::vector<edge_cluster_t> edge_clusters_t;
 
+typedef std::pair<NodePtr, NodePtr> backedge_t;
+typedef std::vector<backedge_t> backedges_t;
+
 dnnl::engine Graph::eng(dnnl::engine::kind::cpu, 0);
 
 Graph::~Graph() {
@@ -669,6 +672,53 @@ static edge_clusters_t findEdgeClusters(const std::vector<EdgePtr> & graphEdges)
     return edge_clusters;
 }
 
+// typedef std::unordered_set<EdgePtr> edge_cluster_t;
+// typedef std::vector<edge_cluster_t> edge_clusters_t;
+
+// typedef std::pair<NodePtr, NodePtr> backedge_t;
+// typedef std::vector<backedge_t> backedges_t;
+// merge edge clusters if they could share memory () in TI back edges.
+static void mergeClustersforBackedges(const backedges_t& back_edges, edge_clusters_t& edge_clusters) {
+    // identify cluster id for each nodes in the backedges
+    std::unordered_map<NodePtr, std::tuple<std::vector<size_t>, size_t>> backedge_cluster_map;
+    for (size_t i = 0; i < edge_clusters.size(); i++) {
+        const auto edge_cluster = edge_clusters[i];
+        for (const auto& back_edge : back_edges) {
+            const auto from = back_edge.first;
+            const auto to = back_edge.second;
+            const auto from_edge = from->getParentEdgesAtPort(0)[0]; // only one parent edge for Result.
+            const auto to_edge = to->getChildEdgesAtPort(0)[0]; // explore the fact that the children edges must be in the same cluster.
+            //
+            if (edge_cluster.find(from_edge) != edge_cluster.end()) {
+                backedge_cluster_map[from] = ;
+            }
+        }
+    }
+
+    // for each backedge pairs
+    for (const auto& back_edge : back_edges) {
+        const auto from = back_edge.first;
+        const auto to = back_edge.second;
+        const auto from_desc = from->getBaseMemDescAtInputPort(0);
+        const auto to_desc = to->getBaseMemDescAtOutputPort(0);
+
+        // check the memory description compatible.
+        if (!to_desc->isCompatible(*from_desc)) {
+            DEBUG_LOG(from->getName(), " and ", to->getName(), " memdesc incompatible.");
+            continue;
+        }
+
+        // find the cluster of layer-from and check if it is the last execute node in the cluster
+
+
+        // find the cluster of layer-to, and check if the lifespan overlaps with cluster of layer-from.
+
+        // check the lifespan of layer-to's cluster overlaps with any other layer-to's cluster that shares the same layer-from and can be merged.
+    }
+
+    return;
+}
+
 void Graph::AllocateWithReuse() {
     edge_clusters_t edge_clusters = findEdgeClusters(graphEdges);
 
@@ -699,6 +749,15 @@ void Graph::AllocateWithReuse() {
     }
 
     edge_clusters.resize(edge_clusters_count);
+
+    //
+    backedges_t back_edges;
+    for (const auto &back_edge : back_edges_in_name) {
+        std::cout << __LINE__ << ": back_edge " << back_edge.first << " --> " << back_edge.second << std::endl;
+        back_edges.emplace_back(std::make_pair(outputNodesMap[back_edge.first], inputNodesMap[back_edge.second]));
+    }
+
+    mergeClustersforBackedges(back_edges, edge_clusters);
 
     // check if there is an output in the cluster.
     // TODO: restrict to output nodes who is the from-layer of a backedge

@@ -17,6 +17,7 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <utility>
 
 namespace ov {
 namespace intel_cpu {
@@ -51,6 +52,10 @@ public:
 
     void setProperty(const std::map<std::string, std::string> &properties);
     Config getProperty() const;
+
+    void setBackedges(std::vector<std::pair<std::string, std::string>> &backedges) {
+        back_edges_in_name = backedges;
+    }
 
     template<typename NET>
     void CreateGraph(NET &network,
@@ -267,6 +272,8 @@ private:
     MultiCachePtr rtParamsCache;
     std::shared_ptr<std::mutex> sharedMutex = nullptr;
     DnnlScratchPadPtr rtScratchPad;
+
+    std::vector<std::pair<std::string, std::string>> back_edges_in_name;
 
     // The to-layer of an backedge won't share memory manager with other clusters.
     // This will avoid memory spoil when the from-layer reuses its memory.

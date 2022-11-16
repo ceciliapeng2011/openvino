@@ -578,26 +578,6 @@ void TensorIterator::getSupportedDescriptors() {
     if (!tiOp) {
         THROW_ERROR << "cannot be cast to ov::op::util::SubGraphOp";
     }
-    const std::shared_ptr<const ov::Model> body = tiOp->get_function();
-    sub_graph.CreateGraph(body, ext_mng, weightCache, sharedMutex);
-
-    const auto &inMap = sub_graph.GetInputNodesMap();
-    for (const auto &param : tiOp->get_function()->get_parameters()) {
-        auto inNode = inMap.find(param->get_friendly_name());
-        if (inNode != inMap.end()) {
-            input_nodes.push_back(inNode->second.get());
-        }
-    }
-
-    const auto &outMap = sub_graph.GetOutputNodesMap();
-    for (const auto &out : tiOp->get_function()->get_results()) {
-        const auto prev = out->input_value(0);
-        const auto inputID = ngraph::op::util::create_ie_output_name(prev);
-        auto outNode = outMap.find(inputID);
-        if (outNode != outMap.end()) {
-            output_nodes.push_back(outNode->second.get());
-        }
-    }
 
     // Port map: outputs
     for (const auto& desc : tiOp->get_output_descriptions()) {
@@ -625,6 +605,8 @@ void TensorIterator::getSupportedDescriptors() {
     }
 
     // Port map : inputs and back edges
+    std::vector<std::pair<std::string, std::string>> backedges_in_name;
+
     for (const auto& desc : tiOp->get_input_descriptions()) {
         auto body_input_index = desc->m_body_parameter_index;
 
@@ -642,6 +624,8 @@ void TensorIterator::getSupportedDescriptors() {
 
             backEdges.emplace_back(PortMap {
                     static_cast<int>(body_output_idx), static_cast<int>(body_input_index), -1, 1, 0, -1, 1});
+            backedges_in_name.emplace_back(std::make_pair(tiOp->get_function()->get_results()[body_output_idx]->get_friendly_name(),
+                                                        tiOp->get_function()->get_parameters()[body_input_index]->get_friendly_name()));
         } else if (auto inv_desc = ov::as_type_ptr<const ov::op::util::SubGraphOp::InvariantInputDescription>(desc)) {
             inputPortMap.emplace_back(PortMap {
                     static_cast<int>(inv_desc->m_input_index), static_cast<int>(body_input_index), -1, 1, 0, -1, 1});
@@ -665,6 +649,31 @@ void TensorIterator::getSupportedDescriptors() {
         algorithm = Algorithm::TensorIteratorCommon;
     } else {
         THROW_ERROR << "isn't supported!";
+    }
+
+    //
+    // must be involked before CreateGraph .. m.b. better as an extra parameter of it?
+    if (backedges_in_name.size() > 0) sub_graph.setBackedges(backedges_in_name);
+
+    const std::shared_ptr<const ov::Model> body = tiOp->get_function();
+    sub_graph.CreateGraph(body, ext_mng, weightCache, sharedMutex);
+
+    const auto &inMap = sub_graph.GetInputNodesMap();
+    for (const auto &param : tiOp->get_function()->get_parameters()) {
+        auto inNode = inMap.find(param->get_friendly_name());
+        if (inNode != inMap.end()) {
+            input_nodes.push_back(inNode->second.get());
+        }
+    }
+
+    const auto &outMap = sub_graph.GetOutputNodesMap();
+    for (const auto &out : tiOp->get_function()->get_results()) {
+        const auto prev = out->input_value(0);
+        const auto inputID = ngraph::op::util::create_ie_output_name(prev);
+        auto outNode = outMap.find(inputID);
+        if (outNode != outMap.end()) {
+            output_nodes.push_back(outNode->second.get());
+        }
     }
 }
 
