@@ -680,25 +680,57 @@ static edge_clusters_t findEdgeClusters(const std::vector<EdgePtr> & graphEdges)
 // merge edge clusters if they could share memory () in TI back edges.
 static void mergeClustersforBackedges(const backedges_t& back_edges, edge_clusters_t& edge_clusters) {
     // identify cluster id for each nodes in the backedges
-    std::unordered_map<NodePtr, std::tuple<std::vector<size_t>, size_t>> backedge_cluster_map;
-    for (size_t i = 0; i < edge_clusters.size(); i++) {
-        const auto edge_cluster = edge_clusters[i];
-        for (const auto& back_edge : back_edges) {
-            const auto from = back_edge.first;
-            const auto to = back_edge.second;
-            const auto from_edge = from->getParentEdgesAtPort(0)[0]; // only one parent edge for Result.
-            const auto to_edge = to->getChildEdgesAtPort(0)[0]; // explore the fact that the children edges must be in the same cluster.
-            //
-            if (edge_cluster.find(from_edge) != edge_cluster.end()) {
-                backedge_cluster_map[from] = ;
+    typedef std::tuple<std::vector<size_t>, size_t> backedge_cluster_idx_t; // backedge from/to nodeptr : (backedge_indices, edge_cluster_index)
+    typedef std::unordered_map<NodePtr, backedge_cluster_idx_t> backedge_cluster_idx_map_t;
+    backedge_cluster_idx_map_t backedge_cluster_map;
+    auto getBackedgesClusterMap = [&]() {
+        std::unordered_map<NodePtr, std::vector<size_t>> from_backedge_map;
+        std::unordered_map<NodePtr, std::vector<size_t>> to_backedge_map;
+        for (size_t i = 0; i < back_edges.size(); i++) {
+            const auto from = back_edges[i].first;
+            const auto to = back_edges[i].second;
+            if (from_backedge_map.find(from) != from_backedge_map.end()) {
+                from_backedge_map[from].emplace_back(i);
+            } else {
+                from_backedge_map.emplace(from, i);
+            }
+            if (to_backedge_map.find(to) != to_backedge_map.end()) {
+                to_backedge_map[to].emplace_back(i);
+            } else {
+                to_backedge_map.emplace(to, i);
             }
         }
-    }
+        for (const auto& item : from_backedge_map) {
+            const auto from = item.first;
+            const auto from_edge = from->getParentEdgesAtPort(0)[0]; // only one parent edge for Result.
+            for (size_t i = 0; i < edge_clusters.size(); i++) {
+                const auto edge_cluster = edge_clusters[i];
+                if (edge_cluster.find(from_edge) != edge_cluster.end()) {
+                    backedge_cluster_map[from] = std::make_tuple(from_backedge_map[from], i);
+                    break;
+                }
+            }
+        }
+        for (const auto& item : from_backedge_map) {
+            const auto to = item.first;
+            const auto to_edge = to->getChildEdgesAtPort(0)[0]; // explore the fact that the children edges must be in the same cluster.
+            for (size_t i = 0; i < edge_clusters.size(); i++) {
+                const auto edge_cluster = edge_clusters[i];
+                if (edge_cluster.find(to_edge) != edge_cluster.end()) {
+                    backedge_cluster_map[to] = std::make_tuple(to_backedge_map[to], i);
+                    break;
+                }
+            }
+        }
+    };
 
+    getBackedgesClusterMap();
+
+    std::vector<size_t> reuseable_backedges;
     // for each backedge pairs
-    for (const auto& back_edge : back_edges) {
-        const auto from = back_edge.first;
-        const auto to = back_edge.second;
+    for (size_t i = 0; i < back_edges.size(); i++) {
+        const auto from = back_edges[i].first;
+        const auto to = back_edges[i].second;
         const auto from_desc = from->getBaseMemDescAtInputPort(0);
         const auto to_desc = to->getBaseMemDescAtOutputPort(0);
 
@@ -709,12 +741,72 @@ static void mergeClustersforBackedges(const backedges_t& back_edges, edge_cluste
         }
 
         // find the cluster of layer-from and check if it is the last execute node in the cluster
-
+        auto from_cluster_idx = std::get<1>(backedge_cluster_map[from]);
+        auto from_cluster = edge_clusters[from_cluster_idx];
+        auto from_exec_idx = from->getExecIndex();
+        for (const auto& edge : from_cluster) {
+           if (edge->getChild()->getExecIndex() > from_exec_idx) {
+                DEBUG_LOG(from->getName(), " is not the last execute node in its edge cluster.");
+                break;
+           }
+        }
 
         // find the cluster of layer-to, and check if the lifespan overlaps with cluster of layer-from.
+        auto getLifespanBox = [](const edge_cluster_t edge_cluster, const size_t edge_cluster_idx) {
+            MemorySolver::Box box = { std::numeric_limits<int>::max(), 0, 0, edge_cluster_idx };
+            for (auto &edge : edge_cluster) {
+                int e_start = edge->getParent()->getExecIndex();
+                int e_finish = edge->getChild()->getExecIndex();
 
-        // check the lifespan of layer-to's cluster overlaps with any other layer-to's cluster that shares the same layer-from and can be merged.
+                box.start = std::min(e_start, box.start);
+                box.finish = std::max(e_finish, box.finish);
+            }
+
+            // Constant data are filled once on load.
+            // So we need it untouchable during all execution time
+            // -1 is a place holder for a max timestamp.
+            bool isConst = false, isOutput = false, isInput = false;
+            for (auto &edge : edge_cluster) {
+                isConst  |= isConstOutput(edge);
+                isOutput |= edge->getChild()->getType() == Type::Output;
+                isInput  |= edge->getParent()->getType() == Type::Input;
+            }
+
+            if (isInput | isConst) box.start = 0;
+            if (isOutput | isConst) box.finish = -1;
+            return box;
+        };
+
+        auto to_cluster_idx = std::get<1>(backedge_cluster_map[to]);
+        auto to_cluster = edge_clusters[to_cluster_idx];
+        const auto to_box = getLifespanBox(to_cluster, to_cluster_idx);
+        const auto from_box = getLifespanBox(from_cluster, from_cluster_idx);
+        if (!(to_box.start > from_box.finish || to_box.finish < from_box.start)) { // overoverlap
+            DEBUG_LOG(from->getName(), " and ", to->getName(), " lifespans overlap.");
+            continue;
+        }
+
+        // check the lifespan of layer-to's cluster overlaps with any other layer-to's cluster that
+        // shares the same layer-from and can be merged.
+        bool reuseable = true;
+        const auto& from_backedges = std::get<0>(backedge_cluster_map[from]);
+        if (from_backedges.size() > 1) { // 1:N mapping backedges exist
+            for (const auto& reuseable_backedge : reuseable_backedges) {
+                if ( std::find(reuseable_backedges.begin(), reuseable_backedges.end(), item) != reuseable_backedges.end() ) {
+
+                }
+            }
+        }
+        if (!reuseable) {
+            DEBUG_LOG(from->getName(), " and ", to->getName(), " lifespans overlap.");
+            continue;
+        }
+
+        // all checks passed... find a backedge whose layer-to can reuse memory of layer-from.
+        reuseable_backedges.push_back(i);
     }
+
+    // start merging shareable backedges.
 
     return;
 }
