@@ -624,7 +624,10 @@ void TensorIterator::getSupportedDescriptors() {
 
             backEdges.emplace_back(PortMap {
                     static_cast<int>(body_output_idx), static_cast<int>(body_input_index), -1, 1, 0, -1, 1});
-            backedges_in_name.emplace_back(std::make_pair(tiOp->get_function()->get_results()[body_output_idx]->get_friendly_name(),
+
+            const auto &result_input = tiOp->get_function()->get_results()[body_output_idx]->input_value(0); // same way as Graph::outputNodesMap
+            const auto name = ngraph::op::util::get_ie_output_name(result_input);
+            backedges_in_name.emplace_back(std::make_pair(name,
                                                         tiOp->get_function()->get_parameters()[body_input_index]->get_friendly_name()));
         } else if (auto inv_desc = ov::as_type_ptr<const ov::op::util::SubGraphOp::InvariantInputDescription>(desc)) {
             inputPortMap.emplace_back(PortMap {
