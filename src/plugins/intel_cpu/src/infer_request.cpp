@@ -22,6 +22,7 @@
 #include <debug.h>
 #include "utils/general_utils.h"
 #include "utils/cpu_utils.hpp"
+#include "utils/profiler.hpp"
 #include "memory_desc/dnnl_blocked_memory_desc.h"
 #include <transformations/utils/utils.hpp>
 #include <ie_ngraph_utils.hpp>
@@ -201,6 +202,7 @@ static inline void changeEdgePtr(const EdgePtr &edge, void *newPtr) {
 }
 
 void InferRequestBase::changeDefaultPtr() {
+    auto _prof = Profile("changeDefaultPtr");
     for (auto& it : externalPtr) {
         const auto& inputNodesMap = graph->GetInputNodesMap();
         auto input = inputNodesMap.find(it.first);
@@ -585,6 +587,7 @@ InferenceEngine::Blob::Ptr LegacyInferRequest::GetBlob(const std::string& name) 
 }
 
 void LegacyInferRequest::PushInputData() {
+    auto _prof = Profile("LegacyInferRequest::PushInputData");
     for (auto input : _inputs) {
         auto inputName = input.first;
         if (!_networkInputs[inputName]) {
@@ -859,6 +862,7 @@ InferenceEngine::Blob::Ptr InferRequest::GetBlob(const std::string& name) {
 }
 
 void InferRequest::PushInputData() {
+    auto _prof = Profile("InferRequest::PushInputData");
     for (auto input : _inputs) {
         auto inputName = input.first;
         if (!modelInputsMap[inputName]) {

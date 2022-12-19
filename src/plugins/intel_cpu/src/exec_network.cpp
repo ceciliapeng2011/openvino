@@ -181,6 +181,7 @@ ExecNetwork::GraphGuard::Lock ExecNetwork::GetGraph() const {
                     std::lock_guard<std::mutex> lock{*_mutex.get()};
                     graphLock._graph.setConfig(_cfg);
                 }
+                graphLock._graph.SetGraphID(streamId * 1000);
                 graphLock._graph.CreateGraph(_network, extensionManager, _numaNodesWeights[numaNodeId], _mutex);
             } catch(...) {
                 exception = std::current_exception();
