@@ -64,8 +64,8 @@ protected:
  */
 class DynamicBuffer {
 public:
-    DynamicBuffer(const MemoryPtr &from_, const std::vector<MemoryPtr> &to_, const PortMap &map_rule_);
-    ~DynamicBuffer() = default;
+    DynamicBuffer(const MemoryPtr &from_, const std::vector<MemoryPtr> &to_, const PortMap &map_rule_, int max_iter_count);
+    ~DynamicBuffer();
 
     void execute(const dnnl::engine& eng, const int iter);
     void transfer(const Node* node);
@@ -74,6 +74,14 @@ private:
     void init(const dnnl::engine& eng);
 
     /* methods for resize and refill buffer */
+    inline bool check_buffer() {
+        if (map_rule.stride > 0.0f) {
+            if (chunk_offset_in_byte + mem_holder_unit > mem_holder_buffer->get_desc().dims()[map_rule.axis] * len) return true;
+        } else {
+            if (chunk_offset_in_byte - mem_holder_unit < 0) return true;
+        }
+        return false;
+    };
     std::shared_ptr<dnnl::memory> create_buffer(const dnnl::engine& eng);
     void move_buffer(std::shared_ptr<dnnl::memory> new_buffer);
     void move_data();
@@ -85,7 +93,9 @@ private:
     size_t count = 1lu;
     size_t elem_size = 0lu;
     ptrdiff_t chunk_offset_in_byte = 0;
-    ptrdiff_t buffer_offset_in_byte = 0;
+    size_t mem_holder_unit = 0;   // the amount of bytes copied per each count per each execution (iteration)
+    size_t num_iters = 0lu;      // number of executions happened
+    int max_iter_count = -1;   // estimated maximum iter count 
 
     MemoryPtr from;
     std::vector<MemoryPtr> to;
@@ -122,7 +132,7 @@ private:
     void prepareOutputPorts();
     void prepareBackEdges();
     void prepareDynamicBackEdges();
-    void prepareDynamicBuffers();
+    void prepareDynamicBuffers(int max_iter_count);
     void prepareLoopBodyCurrentIteration();
     void prepareContinueCond();
     void prepareInitialCond();

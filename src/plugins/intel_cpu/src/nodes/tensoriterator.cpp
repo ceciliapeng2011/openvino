@@ -55,12 +55,15 @@ static NodeConfig make_plain_config(const std::shared_ptr<ov::Node>& op) {
     return config;
 }
 
-static void redefineToMemories(const std::vector<MemoryPtr>& to_mems, MemoryDescPtr new_desc) {
+static void redefineToMemories(const std::vector<MemoryPtr>& to_mems, MemoryDescPtr new_desc, void* data = nullptr) {
     const auto &currDesc = to_mems.front()->getDesc();
     if (currDesc.getShape().isDynamic() || currDesc.getShape().getStaticDims() != new_desc->getShape().getStaticDims()) {
         // TODO : check the entire dstMemPtrs usage considering the proper memory sharing
         for (size_t j = 0; j < to_mems.size(); j++) {
-            to_mems[j]->redefineDesc(new_desc);
+            if (nullptr != data)
+                to_mems[j]->Create(new_desc, data, false);
+            else
+                to_mems[j]->redefineDesc(new_desc);
         }
     }
 }
@@ -226,41 +229,67 @@ private:
 };
 
 DynamicBuffer::DynamicBuffer(const MemoryPtr &from_, const std::vector<MemoryPtr> &to_,
-                             const PortMap &map_rule_) : from(from_), to(to_), map_rule(map_rule_) {
+                             const PortMap &map_rule_, const int max_iter_count_) : from(from_), to(to_), map_rule(map_rule_), max_iter_count(max_iter_count_) {
     elem_size = DnnlExtensionUtils::sizeOfDataType(from->GetDataType());
 }
 
+DynamicBuffer::~DynamicBuffer() {
+    mem_holder_buffer.reset();
+}
+
 void DynamicBuffer::execute(const dnnl::engine& eng, const int iter) {
+    if (from->getStaticDims()[map_rule.axis] != std::abs(map_rule.stride))
+        IE_THROW() << "TensorIterator (Loop) has incorrect output shape[axis] after iteration for concatenation. " << std::abs(map_rule.stride) <<
+        " is expected, but actual: " << from->getStaticDims()[map_rule.axis];
+
     if (iter == 0) {
         init(eng);
         return;
     }
 
-    auto new_buffer = create_buffer(eng);
-    move_buffer(new_buffer);
+    // if chunk_offset_in_byte out of range of buffer holder, reallocate a larger chunk
+    if (check_buffer()) {
+        auto new_buffer = create_buffer(eng);
+        move_buffer(new_buffer);
+    }
+
+    //
     move_data();
 }
 
 void DynamicBuffer::init(const dnnl::engine& eng) {
-    chunk_offset_in_byte = 0;
-    buffer_offset_in_byte = 0;
-
     const auto axis = map_rule.axis;
     const auto stride = map_rule.stride;
     const auto abs_stride = std::abs(stride);
 
-    auto src_mem = from->GetPrimitive();
-    auto src_desc = src_mem.get_desc();
-    auto dims = src_desc.dims();
+    if (!mem_holder_buffer) { // else reuse buffer holder of last inference
+        auto src_mem = from->GetPrimitive();
+        auto src_desc = src_mem.get_desc();
+        auto dims = src_desc.dims();
 
-    if (dims[axis] != abs_stride)
-        IE_THROW() << "TensorIterator (Loop) has incorrect output shape[axis] after iteration for concatenation. " << abs_stride <<
-                   " is expected, but actual: " << dims[axis];
+        count = std::accumulate(dims.begin(), dims.begin() + map_rule.axis, size_t(1), std::multiplies<size_t>());
+        len = std::accumulate(dims.begin() + map_rule.axis + 1, dims.end(), elem_size, std::multiplies<size_t>());
+        mem_holder_unit = abs_stride * len;
 
-    count = std::accumulate(dims.begin(), dims.begin() + map_rule.axis, size_t(1), std::multiplies<size_t>());
-    len = std::accumulate(dims.begin() + map_rule.axis + 1, dims.end(), elem_size, std::multiplies<size_t>());
-    mem_holder_buffer.reset(new memory(src_desc, eng));
-    copy(reinterpret_cast<const uint8_t*>(from->GetPtr()), get_ptr(*mem_holder_buffer.get()), 0, 0, 1, from->GetSize());
+        // preallocate a large chunk of memory to hold intermediate concated outputs of all iterations.
+        auto estimated_iters = max_iter_count != -1 ? max_iter_count : 1;  // TODO: the initial amount
+        dims[axis] = abs_stride * estimated_iters;
+        dnnl::memory::desc new_buffer_desc(dims, from->GetDataType(), DnnlExtensionUtils::GetPlainFormatByRank(dims.size()));
+        mem_holder_buffer.reset(new memory(new_buffer_desc, eng));
+
+        // if (mem_holder_unit != mem_holder_buffer->get_desc().data.format_desc.blocking.strides[axis] * elem_size * abs_stride) {
+        //     IE_THROW() << "TensorIterator (Loop) has incorrect output shape[axis] for concatenation. " << mem_holder_unit <<
+        //             " is expected, but actual: " << mem_holder_buffer->get_desc().data.format_desc.blocking.strides[axis] * elem_size * abs_stride;
+        // }
+    }
+
+    // reset chunk_offset_in_byte since the first execution
+    const auto chunk_stride_in_byte = mem_holder_buffer->get_desc().dims()[axis] * len;
+    chunk_offset_in_byte = stride > 0.0f ? 0 : (chunk_stride_in_byte - mem_holder_unit);
+    num_iters = 0;
+
+    //
+    move_data();
 }
 
 std::shared_ptr<dnnl::memory> DynamicBuffer::create_buffer(const dnnl::engine& eng) {
@@ -271,18 +300,8 @@ std::shared_ptr<dnnl::memory> DynamicBuffer::create_buffer(const dnnl::engine& e
     const auto old_desc = mem_holder_buffer->get_desc();
     auto dims = old_desc.dims();
 
-    if (from->getStaticDims()[axis] != abs_stride)
-        IE_THROW() << "TensorIterator (Loop) has incorrect output shape[axis] after iteration for concatenation. " << abs_stride <<
-        " is expected, but actual: " << from->getStaticDims()[axis];
-
-    dims[axis] += abs_stride;
+    dims[axis] += abs_stride * 1;  // TODO: the increasing amount
     dnnl::memory::desc new_buffer_desc(dims, old_desc.data_type(), DnnlExtensionUtils::GetPlainFormatByRank(dims.size()));
-
-    if (stride > 0.0f) {
-        chunk_offset_in_byte += new_buffer_desc.data.format_desc.blocking.strides[axis] * elem_size * abs_stride;
-    } else {
-        buffer_offset_in_byte = from->GetPrimitive().get_desc().data.format_desc.blocking.strides[axis] * elem_size * abs_stride;
-    }
 
     return std::make_shared<dnnl::memory>(new_buffer_desc, eng);
 }
@@ -292,9 +311,25 @@ void DynamicBuffer::move_buffer(std::shared_ptr<dnnl::memory> new_buffer) {
     const auto src_stride = mem_holder_buffer->get_desc().dims()[axis] * len;
     const auto dst_stride = new_buffer->get_desc().dims()[axis] * len;
 
-    copy(get_ptr(*mem_holder_buffer.get()), get_ptr(*new_buffer.get()) + buffer_offset_in_byte,
-         src_stride, dst_stride, count, src_stride);
+    const auto valid_size = mem_holder_unit * num_iters;
+    // const auto tmp = map_rule.stride > 0.0f ? chunk_offset_in_byte : (src_stride - chunk_offset_in_byte - mem_holder_unit);
+    // if (valid_size != tmp) {
+    //     IE_THROW() << "TensorIterator (Loop) has incorrect valid size for concatenation. " << valid_size <<
+    //             " is expected, but actual: " << tmp;
+    // }
+    
+    const auto stride = map_rule.stride;
+    const auto src_offset_in_byte = stride > 0.0f ? 0 : (src_stride - valid_size);
+    chunk_offset_in_byte = stride > 0.0f ? 0 : (dst_stride - valid_size);
+
+    copy(get_ptr(*mem_holder_buffer.get()) + src_offset_in_byte, get_ptr(*new_buffer.get()) + chunk_offset_in_byte,
+         src_stride, dst_stride, count, valid_size);
     mem_holder_buffer = new_buffer;
+    if (map_rule.stride > 0.0f) {
+        chunk_offset_in_byte += mem_holder_unit;
+    } else {
+        chunk_offset_in_byte -= mem_holder_unit;
+    }
 }
 
 void DynamicBuffer::move_data() {
@@ -304,15 +339,42 @@ void DynamicBuffer::move_data() {
 
     copy(reinterpret_cast<const uint8_t*>(from->GetPtr()), get_ptr(*mem_holder_buffer.get()) + chunk_offset_in_byte,
          src_stride, dst_stride, count, src_stride);
+
+    // adjust for next execution
+    num_iters++;
+    if (map_rule.stride > 0.0f) {
+        chunk_offset_in_byte += mem_holder_unit;
+    } else {
+        chunk_offset_in_byte -= mem_holder_unit;
+    }
 }
 
 void DynamicBuffer::transfer(const Node* node) {
     if (mem_holder_buffer) {
-        const auto desc = node->getBaseMemDescAtOutputPort(map_rule.from)->cloneWithNewDims(
-                DnnlExtensionUtils::convertToVectorDims(mem_holder_buffer->get_desc().dims()));
-        redefineToMemories(to, desc);
+        const auto axis = map_rule.axis;
+        const auto stride = map_rule.stride;
+        const auto abs_stride = std::abs(stride);
 
-        copy(get_ptr(*mem_holder_buffer.get()), reinterpret_cast<uint8_t*>(to.front()->GetPtr()), 0, 0, 1, to.front()->GetSize());
+        const auto mem_holder_desc = mem_holder_buffer->get_desc();
+        const auto mem_holder_dims = mem_holder_desc.dims();
+        auto dims = mem_holder_dims;
+
+        dims[axis] = abs_stride * num_iters;
+        const auto desc = node->getBaseMemDescAtOutputPort(map_rule.from)->cloneWithNewDims(
+                DnnlExtensionUtils::convertToVectorDims(dims));
+
+        if (dims[axis] == mem_holder_dims[axis]) {
+            // straightly share mem_holder_buffer to outside graph
+            redefineToMemories(to, desc, mem_holder_buffer->get_data_handle());
+        } else {
+            redefineToMemories(to, desc);  // TODO: redefine only if changed since last inference
+
+            const auto src_stride = mem_holder_desc.dims()[axis] * len;
+            const auto dst_stride = to.front()->getStaticDims()[axis] * len;
+
+            copy(get_ptr(*mem_holder_buffer.get()), reinterpret_cast<uint8_t*>(to.front()->GetPtr()),
+                src_stride, dst_stride, count, dst_stride);
+        }
     } else {
         VectorDims newDims = to.front()->GetShape().getDims();
         nullifyUndefinedDims(newDims);
@@ -320,8 +382,6 @@ void DynamicBuffer::transfer(const Node* node) {
         const auto desc = node->getBaseMemDescAtOutputPort(map_rule.from)->cloneWithNewDims(newDims);
         redefineToMemories(to, desc);
     }
-
-    mem_holder_buffer.reset();
 }
 
 void DynamicBuffer::copy(const uint8_t* src, uint8_t* dst, const size_t src_stride, const size_t dst_stride, const size_t count, const size_t len) {
@@ -470,9 +530,6 @@ void TensorIterator::createPrimitive() {
         lastUsedCond = initial_cond_check->getStatus();
     }
 
-    if (isDynamicNode())
-        prepareDynamicBuffers();
-
     Node::createPrimitive();
 }
 
@@ -506,6 +563,8 @@ void TensorIterator::prepareParams() {
     before_mappers.clear();
     back_mappers.clear();
 
+    buffers.clear();
+
     if ((lastUsedCond && lastUsedTripCount != 0) || !isDynamicNode()) {
         reshapeSubgraphInput();
 
@@ -513,7 +572,9 @@ void TensorIterator::prepareParams() {
         prepareContinueCond();
         prepareLoopBodyCurrentIteration();
 
-        if (!isDynamicNode()) {
+        if (isDynamicNode())
+            prepareDynamicBuffers(lastUsedTripCount);
+        else {
             prepareOutputPorts();
             prepareBackEdges();
         }
@@ -635,12 +696,12 @@ void TensorIterator::prepareDynamicBackEdges() {
     }
 }
 
-void TensorIterator::prepareDynamicBuffers() {
+void TensorIterator::prepareDynamicBuffers(int max_iter_count) {
     for (auto map_rule : outputPortMap) {
         if (map_rule.axis != -1) {
             auto to_mems = getToMemories(this, map_rule.from);
             auto &from_mem = output_mem[map_rule.to];
-            buffers.emplace_back(std::make_shared<DynamicBuffer>(from_mem, to_mems, map_rule));
+            buffers.emplace_back(std::make_shared<DynamicBuffer>(from_mem, to_mems, map_rule, max_iter_count));
         }
     }
 }
