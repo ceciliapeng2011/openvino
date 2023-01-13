@@ -21,13 +21,13 @@ namespace ov {
 namespace intel_cpu {
 
 DnnlMemoryDescPtr MemoryDescUtils::convertToDnnlMemoryDesc(const MemoryDescPtr &desc) {
-    if (MemoryDescType::Blocked == desc->getType()) {
+    if (MemoryDescType::Dnnl & desc->getType()) {
+        return std::dynamic_pointer_cast<DnnlMemoryDesc>(desc);
+    } else if (MemoryDescType::Blocked == desc->getType()) {
         const auto cpuDesc = desc->as<CpuBlockedMemoryDesc>();
         return std::shared_ptr<DnnlBlockedMemoryDesc>(new DnnlBlockedMemoryDesc(cpuDesc->getPrecision(), cpuDesc->getShape(), cpuDesc->getBlockDims(),
                                                         cpuDesc->getOrder(), cpuDesc->getOffsetPadding(),
                                                         cpuDesc->getOffsetPaddingToData(), cpuDesc->getStrides()));
-    } else if (MemoryDescType::Dnnl & desc->getType()) {
-        return std::dynamic_pointer_cast<DnnlMemoryDesc>(desc);
     } else {
         IE_THROW() << "Cannot convert MemoryDesc to DnnlMemoryDesc";
     }
