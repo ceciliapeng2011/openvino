@@ -730,6 +730,9 @@ private:
 #ifdef CPU_DEBUG_CAPS
     friend class Verbose;
 #endif
+
+public:
+    bool forceUpdateShape = false;
 };
 
 template <class... T>

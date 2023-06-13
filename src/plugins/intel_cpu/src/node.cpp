@@ -565,7 +565,7 @@ std::vector<memory::format_tag> Node::getAvailableFormatsForDims(const Shape &di
 
 void Node::updateShapes() {
     IE_ASSERT(isDynamicNode()) << "Node::updateShapes() is called to a static shape node of type: " << getTypeStr() << " with name: " << getName();
-    if (needShapeInfer()) {
+    if (needShapeInfer() || forceUpdateShape) {
         auto result = shapeInfer();
         if (ShapeInferStatus::success == result.status) {
             redefineOutputMemory(result.dims);
@@ -617,14 +617,19 @@ void Node::redefineOutputMemory(const std::vector<VectorDims> &newOutputShapes) 
             newOutputShape.push_back(1);
         }
 
+        DEBUG_LOG(getName(), " ", ov::Shape(newOutputShape));
+
         const auto &currDesc = edges[0]->getMemory().getDesc();
-        if (currDesc.getShape().isStatic() && currDesc.getShape().getStaticDims() == newOutputShape)
+        if (currDesc.getShape().isStatic() && currDesc.getShape().getStaticDims() == newOutputShape && !forceUpdateShape)
             continue;
 
         const bool hasZeroDims = std::count(std::begin(newOutputShape), std::end(newOutputShape), 0) > 0;
         const auto memDesc = getBaseMemDescAtOutputPort(i)->cloneWithNewDims(newOutputShape, hasZeroDims);
         for (size_t j = 0; j < edges.size(); j++) {
+            auto old_mem_ptr = edges[j]->getMemoryPtr()->GetData();
             edges[j]->getMemoryPtr()->redefineDesc(memDesc);
+            auto new_mem_ptr = edges[j]->getMemoryPtr()->GetData();
+            DEBUG_LOG(getName(), " output ", i, " edge ", j, " ", old_mem_ptr, " -> ", new_mem_ptr);
         }
     }
 }

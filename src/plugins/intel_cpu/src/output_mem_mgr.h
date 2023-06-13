@@ -16,7 +16,9 @@ public:
     OutputAllocator(InferenceEngine::Blob::Ptr blob) : m_blob{blob} {}
 
     void* allocate(const size_t bytes, const size_t alignment = alignof(max_align_t));
+
     void setMemDesc(MemoryDescPtr desc);
+    void* getData() const noexcept;
 private:
     InferenceEngine::Blob::Ptr m_blob;
     MemoryDescPtr m_memDesc;
@@ -44,9 +46,6 @@ public:
 
 private:
     OutputAllocatorPtr m_allocator;
-    MemoryDescPtr m_memDesc;
-    size_t _memUpperBound = 0ul;
-    void*  _data;
     // We need the default MemMngr as may fallback to copy output... and
     // we have no idea of this in early stages of graph memory allocation.
     std::unique_ptr<IMemoryMngr> _pMemMngr;

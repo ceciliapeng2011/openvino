@@ -3,18 +3,20 @@
 //
 
 #include "output_mem_mgr.h"
+#include "utils/debug_capabilities.h"
 
 using namespace ov::intel_cpu;
 
 void* OutputMemoryMngr::getRawPtr() const noexcept {
     if (m_allocator) {
-        return _data;
+        return m_allocator->getData();
     } else {
         return _pMemMngr->getRawPtr();
     }
 }
 
 void OutputMemoryMngr::setExtBuff(void* ptr, size_t size) {
+    DEBUG_LOG(ptr, "_", size);
     if (m_allocator) {
         return;
     } else {
@@ -25,16 +27,15 @@ void OutputMemoryMngr::setExtBuff(void* ptr, size_t size) {
 bool OutputMemoryMngr::resize(size_t size) {
     if (m_allocator) {
         constexpr int cacheLineSize = 64;
-        bool sizeChanged = false;
-        if (size > _memUpperBound) {
-            m_allocator->setMemDesc(m_memDesc);
-            _data = m_allocator->allocate(size, cacheLineSize);
-            _memUpperBound = size;
-            sizeChanged = true;
-        }
+        bool sizeChanged = true;
+        m_allocator->allocate(size, cacheLineSize);
+        DEBUG_LOG(sizeChanged);
         return sizeChanged;
     } else {
-        return _pMemMngr->resize(size);
+        bool sizeChanged = false;
+        sizeChanged = _pMemMngr->resize(size);
+        DEBUG_LOG(sizeChanged);
+        return sizeChanged;
     }
 }
 
@@ -43,8 +44,7 @@ bool OutputMemoryMngr::hasExtBuffer() const noexcept {
 }
 
 void OutputMemoryMngr::setMemDesc(MemoryDescPtr desc) {
-    m_memDesc = desc;
-    return;
+    if (m_allocator) m_allocator->setMemDesc(desc);
 }
 
 void* OutputAllocator::allocate(const size_t bytes, const size_t alignment) {
@@ -68,4 +68,8 @@ void* OutputAllocator::allocate(const size_t bytes, const size_t alignment) {
 void OutputAllocator::setMemDesc(MemoryDescPtr desc) {
     m_memDesc = desc;
     return;
+}
+
+void* OutputAllocator::getData() const noexcept {
+    return m_blob->buffer();
 }

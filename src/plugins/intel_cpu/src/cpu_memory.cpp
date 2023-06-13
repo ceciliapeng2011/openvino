@@ -123,6 +123,8 @@ void Memory::redefineDesc(MemoryDescPtr desc) {
         outMemMngr->setMemDesc(desc);
     }
 
+    DEBUG_LOG(outMemMngr);
+
     this->Create(desc, nullptr, false);
 }
 
