@@ -42,6 +42,7 @@
 #include "utils/ngraph_utils.hpp"
 #include "utils/cpu_utils.hpp"
 #include "utils/verbose.h"
+#include "utils/profiler.hpp"
 #include "memory_desc/cpu_memory_desc_utils.h"
 
 #include <openvino/core/model.hpp>
@@ -67,12 +68,19 @@ typedef std::unordered_set<EdgePtr> edge_cluster_t;
 typedef std::vector<edge_cluster_t> edge_clusters_t;
 
 Graph::~Graph() {
+    //profilerManagerInstance.finalize();
+    //parallel_nt(0, [&](int ithr, int nthr) {
+    //    profilerManagerInstance.finalize();
+    //    std::this_thread::sleep_for(std::chrono::seconds(1));
+    //});
     CPU_DEBUG_CAP_ENABLE(summary_perf(*this));
 }
 
 template<typename NET>
 void Graph::CreateGraph(NET &net, const GraphContext::CPtr ctx) {
     OV_ITT_SCOPE(FIRST_INFERENCE, itt::domains::intel_cpu_LT, "CreateGraph");
+
+    ProfilerInit();
 
     if (IsReady())
         ForgetGraphData();
@@ -982,7 +990,7 @@ bool Graph::ProcessDynNodes() {
 
 void Graph::PushInputData(const std::string& name, const InferenceEngine::Blob::Ptr &in) {
     if (!IsReady()) IE_THROW()<< "Wrong state. Topology not ready.";
-
+    auto _prof = Profile("Graph::PushInputData");
     auto input = inputNodesMap.find(name);
     if (input != inputNodesMap.end()) {
         auto& inTensorDesc = in->getTensorDesc();
@@ -1017,6 +1025,7 @@ void Graph::PushInputData(const std::string& name, const InferenceEngine::Blob::
 
 // suppose always being shared infer_request intel_cpu::Tensor to Graph if isDynamic.
 void Graph::PullOutputData(BlobMap &out) {
+    auto _prof = Profile("Graph::PullOutputData");
     if (!IsReady())
         IE_THROW() << "Wrong state. Topology not ready.";
 
@@ -1103,11 +1112,16 @@ void Graph::PullOutputData(BlobMap &out) {
 
 void Graph::InferStatic(InferRequestBase* request) {
     dnnl::stream stream(getEngine());
-
+    auto _prof0 = Profile([this](ProfileData * p){
+        p->name = "Graph" + std::to_string(graph_id) + "::InferStatic_#" + std::to_string(infer_count);
+    });
     for (const auto& node : executableGraphNodes) {
         VERBOSE(node, getConfig().debugCaps.verbose);
         PERF(node, getConfig().collectPerfCounters);
-
+        auto _prof = Profile([&](ProfileData * p){
+            p->name = node->getTypeStr();
+            p->args = {{"Name", node->getName()}, {"Impl", node->getPrimitiveDescriptorType()}};
+        });
         if (request)
             request->ThrowIfCanceled();
         ExecuteNode(node, stream);
@@ -1312,7 +1326,9 @@ public:
 
 void Graph::InferDynamic(InferRequestBase* request) {
     dnnl::stream stream(getEngine());
-
+    auto _prof0 = Profile([&](ProfileData * p) {
+        p->name = "Graph" + std::to_string(graph_id) + "::InferDynamic_#" + std::to_string(infer_count);
+    });
     std::set<size_t> syncIndsWorkSet;
     for (const auto& nodeIndx : syncNodesInds) {
         syncIndsWorkSet.insert(nodeIndx.second);
@@ -1331,12 +1347,18 @@ void Graph::InferDynamic(InferRequestBase* request) {
     size_t inferCounter = 0;
 
     for (auto stopIndx : syncIndsWorkSet) {
-        updateNodes->run(stopIndx);
+        {
+            auto _prof = Profile("*updateNodes*");
+            updateNodes->run(stopIndx);
+        }
         for (; inferCounter < stopIndx; ++inferCounter) {
             auto& node = executableGraphNodes[inferCounter];
             VERBOSE(node, getConfig().debugCaps.verbose);
             PERF(node, getConfig().collectPerfCounters);
-
+            auto _prof = Profile([&](ProfileData * p){
+                p->name = node->getTypeStr();
+                p->args = {{"Name", node->getName()}, {"Impl", node->getPrimitiveDescriptorType()}};
+            });
             if (request)
                 request->ThrowIfCanceled();
             ExecuteNode(node, stream);
@@ -1369,7 +1391,7 @@ void Graph::Infer(InferRequestBase* request) {
         IE_THROW() << "Unknown ov::intel_cpu::Graph state: " << static_cast<size_t>(status);
     }
 
-    if (infer_count != -1) infer_count++;
+    infer_count++;
 }
 
 void Graph::VisitNode(NodePtr node, std::vector<NodePtr>& sortedNodes) {
