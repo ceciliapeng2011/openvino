@@ -1026,6 +1026,9 @@ void Graph::PullOutputData(BlobMap &out) {
         IE_THROW() << "Wrong state. Topology not ready.";
 
     for (auto &outputMap : outputNodesMap) {
+        auto _prof0 = Profile([&](ProfileData * p) {
+            p->name = "Graph::PullOutputData_#" + outputMap.first;
+        });
         auto name = outputMap.first;
         auto node = outputMap.second;
         auto parentEdge = node->getParentEdgeAt(0);

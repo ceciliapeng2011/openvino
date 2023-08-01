@@ -28,6 +28,7 @@
 #include "proxy_mem_mgr.h"
 #include "openvino/runtime/make_tensor.hpp"
 #include <utils/general_utils.h>
+#include "utils/profiler.hpp"
 
 namespace ov {
 namespace intel_cpu {
@@ -212,6 +213,7 @@ static inline void changeEdgePtr(const EdgePtr &edge, InferenceEngine::Blob::Ptr
 }
 
 void InferRequestBase::changeDefaultPtr() {
+    auto _prof = Profile("changeDefaultPtr");
     const auto& inputNodesMap = graph->GetInputNodesMap();
     const auto& outputNodesMap = graph->GetOutputNodesMap();
     for (auto& it : externalPtr) {
