@@ -211,7 +211,7 @@ protected:
 
     // For dumping purposes. -1 - no counting, all other positive
     // values mean increment it within each Infer() call
-    int infer_count = -1;
+    int infer_count = 0;
 
     bool reuse_io_tensors = true;
 
@@ -262,6 +262,8 @@ private:
     std::unordered_map<Node*, size_t> syncNodesInds;
 
     GraphContext::CPtr context;
+
+    mutable std::unordered_map<std::string, std::array<uint64_t, 5>> countersMap;
 
     void EnforceInferencePrecision();
     void EnforceBF16();

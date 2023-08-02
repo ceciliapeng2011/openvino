@@ -68,6 +68,15 @@ typedef std::unordered_set<EdgePtr> edge_cluster_t;
 typedef std::vector<edge_cluster_t> edge_clusters_t;
 
 Graph::~Graph() {
+    for (const auto& item : countersMap) {
+        constexpr int divisor = 1000000;
+        std::cout << item.first << " : ";
+        auto& timeArray = item.second;
+        for (size_t i = 0; i < timeArray.size() - 1; i++) {
+            std::cout << float(timeArray[i]) / divisor << " , "; // / infer_call_count
+        }
+        std::cout << timeArray.back() << std::endl;
+    }
     CPU_DEBUG_CAP_ENABLE(summary_perf(*this));
 }
 
@@ -1137,13 +1146,24 @@ public:
 
 class UpdateNodesSeq : public IUpdateNodes {
 public:
-    explicit UpdateNodesSeq(std::vector<NodePtr>& executableGraphNodes) : m_executableGraphNodes(executableGraphNodes) {}
+    explicit UpdateNodesSeq(std::vector<NodePtr>& executableGraphNodes,
+                            std::unordered_map<std::string, std::array<uint64_t, 5>>& countersMap,
+                            bool profile) :
+                            m_executableGraphNodes(executableGraphNodes),
+                            m_countersMap(countersMap),
+                            m_profile(profile) {}
     void run(size_t stopIndx) override {
         for (; prepareCounter < stopIndx; ++prepareCounter) {
             const auto& node = m_executableGraphNodes[prepareCounter];
             if (node->isDynamicNode()) {
-                node->updateShapes();
+                if (m_profile)
+                    node->updateShapes(m_countersMap);
+                else
+                    node->updateShapes();
+                auto start = std::chrono::steady_clock::now();
                 node->updateDynamicParams();
+                auto end = std::chrono::steady_clock::now();
+                if (m_profile) m_countersMap[node->getTypeStr()][2] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
             }
         }
     }
@@ -1151,6 +1171,8 @@ public:
 private:
     size_t prepareCounter = 0;
     std::vector<NodePtr>& m_executableGraphNodes;
+    std::unordered_map<std::string, std::array<uint64_t, 5>>& m_countersMap;
+    bool m_profile = false;
 };
 
 #if (OV_THREAD == OV_THREAD_SEQ)
@@ -1338,11 +1360,13 @@ void Graph::InferDynamic(InferRequestBase* request) {
     syncIndsWorkSet.insert(executableGraphNodes.size());
 
     std::unique_ptr<IUpdateNodes> updateNodes{};
-    if (parallel_get_max_threads() > 1) {
-        updateNodes.reset(new UpdateNodes(executableGraphNodes));
-    } else {
-        updateNodes.reset(new UpdateNodesSeq(executableGraphNodes));
-    }
+    // if (parallel_get_max_threads() > 1) {
+    //     updateNodes.reset(new UpdateNodes(executableGraphNodes));
+    // } else {
+        bool profile = infer_count > 0;
+        if (!std::getenv("PROFILE") || atoi(std::getenv("PROFILE")) == 0) profile = false;
+        updateNodes.reset(new UpdateNodesSeq(executableGraphNodes, countersMap, profile));
+    // }
     size_t inferCounter = 0;
 
     for (auto stopIndx : syncIndsWorkSet) {
@@ -1360,7 +1384,13 @@ void Graph::InferDynamic(InferRequestBase* request) {
             });
             if (request)
                 request->ThrowIfCanceled();
+            auto start = std::chrono::steady_clock::now();
             ExecuteNode(node, stream);
+            auto end = std::chrono::steady_clock::now();
+            if (profile) {
+                countersMap[node->getTypeStr()][3] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+                countersMap[node->getTypeStr()][4] += 1;
+            }
         }
     }
 }
