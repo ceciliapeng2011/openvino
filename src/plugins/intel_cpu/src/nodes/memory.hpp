@@ -80,7 +80,7 @@ public:
     bool needShapeInfer() const override { return false; }
     bool needPrepareParams() const override { return false; }
 
- private:
+private:
     /**
      * @brief keeps reference to input sibling node
      */
