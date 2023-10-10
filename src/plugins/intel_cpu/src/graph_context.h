@@ -13,6 +13,23 @@
 namespace ov {
 namespace intel_cpu {
 
+class InferRequestBase;
+
+class InferRequestBridge {
+public:
+    using Ptr = std::shared_ptr<InferRequestBridge>;
+    void setCurInferRequest(InferRequestBase* _curInferRequest) {
+        curInferRequest = _curInferRequest;
+    }
+
+    InferRequestBase* getCurInferRequest() const {
+        return curInferRequest;
+    }
+
+private:
+    InferRequestBase* curInferRequest = nullptr;
+};
+
 class GraphContext {
 public:
     typedef std::shared_ptr<GraphContext> Ptr;
@@ -28,6 +45,7 @@ public:
           isGraphQuantizedFlag(isGraphQuantized) {
         rtParamsCache = std::make_shared<MultiCache>(config.rtCacheCapacity);
         rtScratchPad = std::make_shared<DnnlScratchPad>(eng);
+        inferReqBridge = std::make_shared<InferRequestBridge>();
     }
 
     const Config& getConfig() const {
@@ -59,6 +77,10 @@ public:
         return isGraphQuantizedFlag;
     }
 
+    InferRequestBridge::Ptr getInferRequestBridge() const {
+        return inferReqBridge;
+    }
+
 private:
     Config config;  // network-level config
 
@@ -70,6 +92,8 @@ private:
 
     bool isGraphQuantizedFlag = false;
     static dnnl::engine eng;  // onednn engine (singleton)
+
+    InferRequestBridge::Ptr inferReqBridge;
 };
 
 }  // namespace intel_cpu

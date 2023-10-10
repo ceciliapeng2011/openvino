@@ -89,6 +89,10 @@ public:
         return outputNodesMap;
     }
 
+    const ov::op::util::VariableVector& get_variables() const {
+        return m_variables;
+    }
+
     NodePtr getInputNodeByName(const std::string &name) {
         auto input = inputNodesMap.find(name);
         if (input == inputNodesMap.end())
@@ -251,6 +255,8 @@ private:
     // TODO: change std::map to std::unordered_map
     std::map<std::string, NodePtr> inputNodesMap;
     std::map<std::string, NodePtr> outputNodesMap;
+
+    ov::op::util::VariableVector m_variables;
 
     std::unordered_map<std::string, ProxyMemoryMngrPtr> outputNodesMemMngrMap;
 

@@ -125,6 +125,8 @@ void Graph::Replicate(const std::shared_ptr<const ov::Model> &subgraph) {
     this->_name = "subgraph";
     this->reuse_io_tensors = false;
 
+    m_variables = subgraph->get_variables();
+
     // Map data object onto producer node
     std::map<std::shared_ptr<ov::Node>, NodePtr> op2node;
 
@@ -212,6 +214,8 @@ void Graph::Replicate(const CNNNetwork &network) {
     if (!func) {
         IE_THROW() << "Function pointer inside CNNNetwork is nullptr";
     }
+
+    m_variables = func->get_variables();
 
     auto orderedOps = func->get_ordered_ops();
 

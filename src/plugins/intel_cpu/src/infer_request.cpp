@@ -62,6 +62,17 @@ void InferRequestBase::CreateInferRequest() {
             memoryStates.emplace_back(new VariableState(state_name, state_store));
         }
     }
+
+    // internal states
+    for (const auto& variable : graph->get_variables()) {
+        const auto& cur_id = variable->get_info().variable_id;
+        auto processed =
+            std::any_of(memoryStates.cbegin(), memoryStates.cend(),
+                [cur_id](std::shared_ptr<InferenceEngine::IVariableStateInternal> state) { return state->GetName() == cur_id; } );
+        if (!processed) {
+            memoryStates.emplace_back(new VariableState(cur_id));
+        }
+    }
 }
 
 InferRequestBase::~InferRequestBase() {
@@ -178,6 +189,8 @@ void InferRequestBase::InferImpl() {
     OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, profilingTask);
     auto graphLock = execNetwork->GetGraph();
     graph = &(graphLock._graph);
+    auto reqBridge = graph->getGraphContext()->getInferRequestBridge();
+    reqBridge->setCurInferRequest(this);
 
     ThrowIfCanceled();
     convertBatchedInputBlobs();

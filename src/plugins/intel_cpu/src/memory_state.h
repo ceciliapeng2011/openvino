@@ -17,10 +17,12 @@ namespace intel_cpu {
 
 class VariableState : public InferenceEngine::IVariableStateInternal {
 public:
-    VariableState(std::string name, MemoryPtr storage)
+    VariableState(std::string name, MemoryPtr storage = nullptr)
         : InferenceEngine::IVariableStateInternal{name} {
-        tensor_desc = MemoryDescUtils::convertToTensorDesc(storage->getDesc());
-        Reset();
+        if (storage) {
+            tensor_desc = MemoryDescUtils::convertToTensorDesc(storage->getDesc());
+            Reset();
+        }
     }
 
     void Reset() override;
