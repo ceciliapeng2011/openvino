@@ -113,6 +113,7 @@ enum class Type {
     Unique,
     Ngram,
     RoPE,
+    ScaledDotProductAttention,
 };
 
 enum class Algorithm {
