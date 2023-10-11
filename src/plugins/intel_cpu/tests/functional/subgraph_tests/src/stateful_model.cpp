@@ -43,7 +43,7 @@ public:
     }
 
     const float get_init_state() const {
-        static const float init_value = 2.0f;
+        static const float init_value = 0.0f;
         return init_value;
     }
 
