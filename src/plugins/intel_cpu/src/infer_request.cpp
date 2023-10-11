@@ -123,9 +123,11 @@ void InferRequestBase::PushStates() {
                     if (storage->getData() == state_blob->cbuffer().as<const void *>())
                         continue;  // there is no inferrequest switch
 
+                    // reuse state blob to storage
                     auto state_desc = MemoryDescUtils::convertToDnnlBlockedMemoryDesc(state_blob->getTensorDesc());
                     auto state_mem = std::make_shared<Memory>(eng, state_desc, state_blob->cbuffer(), false);
                     cur_node->storeState(state_mem);
+                    // DEBUG_LOG(state_blob->cbuffer().as<const void *>(), " -> storage ", state_mem->getData());
                 }
             }
         }
@@ -144,8 +146,13 @@ void InferRequestBase::PullStates() {
             for (const auto& state : memoryStates) {
                 if (state->GetName() == cur_id) {
                     auto storage = cur_node->getStore();
-                    auto blob = make_blob_with_precision(MemoryDescUtils::convertToTensorDesc(storage->getDesc()), storage->getData());
-                    state->SetState(blob);
+                    auto new_shape = storage->getStaticDims();
+
+                    if (state->GetState()->getTensorDesc().getDims() != new_shape) {
+                        auto blob = make_blob_with_precision(MemoryDescUtils::convertToTensorDesc(storage->getDesc()), storage->getData());
+                        state->SetState(blob);
+                        // DEBUG_LOG(storage->getData(), " -> state ", blob->cbuffer().as<const void *>());
+                    }
                 }
             }
         }

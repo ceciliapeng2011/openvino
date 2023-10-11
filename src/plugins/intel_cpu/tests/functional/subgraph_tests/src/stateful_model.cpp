@@ -24,7 +24,7 @@ public:
         targetStaticShapes = {{inpShape}};
 
         auto arg = std::make_shared<ov::op::v0::Parameter>(netPrc, ov::Shape{1, 1});
-        auto init_const = ov::op::v0::Constant::create(netPrc, ov::Shape{1, 1}, {0});
+        auto init_const = ov::op::v0::Constant::create(netPrc, ov::Shape{1, 1}, {get_init_state()});
 
         // The ReadValue/Assign operations must be used in pairs in the model.
         // For each such a pair, its own variable object must be created.
@@ -42,18 +42,38 @@ public:
         function = std::make_shared<ov::Model>(ov::ResultVector({res}), ov::SinkVector({assign}), ov::ParameterVector({arg}));
     }
 
+    const float get_init_state() const {
+        static const float init_value = 2.0f;
+        return init_value;
+    }
+
     const std::vector<float>& get_inputs() const {
         static const std::vector<float> input_vals =
             {6.06f, 5.75f, 1.92f, 1.61f, 7.78f, 7.47f, 3.64f, 3.33f, 9.5f, 9.19f};
         return input_vals;
     }
 
-    const std::pair<std::vector<float>, std::vector<float>>& calc_refs() const {
-        static const std::pair<std::vector<float>, std::vector<float>> result = {
-            {6.06f, 17.87f, 25.54, 29.07f, 38.46f, 53.71f, 64.82, 71.79, 84.62, 103.31f}, // expected_res
-            {6.06f, 11.81f, 13.73f, 15.34f, 23.12f, 30.59f, 34.23, 37.56f, 47.06f, 56.25f} // expected_states
-        };
-        return result;
+    const std::pair<std::vector<float>, std::vector<float>> calc_refs(const float init_state) {
+        auto& input_vals = get_inputs();
+        std::vector<float> vec_state(input_vals.size()+1, 0.f);
+        std::vector<float> result(input_vals.size(), 0.f);
+
+        vec_state[0] = init_state;
+        for (size_t i = 0; i < input_vals.size(); ++i) {
+            result[i] = input_vals[i] + vec_state[i];
+            vec_state[i+1] = result[i];
+            result[i] += vec_state[i];
+        }
+        vec_state.erase(vec_state.begin());
+        // std::cout << "result =============== ";
+        // for (auto res : result)
+        //     std::cout << res << ",";
+        // std::cout << std::endl;
+        // std::cout << "vec_state =============== ";
+        // for (auto state : vec_state)
+        //     std::cout << state << ",";
+        // std::cout << std::endl;
+        return std::make_pair(result, vec_state);
     }
 
     void prepare() {
@@ -64,6 +84,7 @@ public:
 
     void run_test() {
         auto& input_vals = get_inputs();
+        auto& expected_results = calc_refs(get_init_state());
         for (size_t i = 0; i < input_vals.size(); ++i) {
             inputs.clear();
             const auto& funcInputs = function->inputs();
@@ -79,7 +100,7 @@ public:
             ASSERT_TRUE(outputTensor);
             inferRequest.infer();
             constexpr float rel_diff_threshold = 1e-4f;
-            const auto& expected_res = calc_refs().first;
+            const auto& expected_res = expected_results.first;
             const float expected_val = expected_res[i];
             const float actual_val = outputTensor.data<ov::element_type_traits<ov::element::f32>::value_type>()[0];
             ASSERT_TRUE(abs(actual_val - expected_val) / abs(expected_val) < rel_diff_threshold);
@@ -87,7 +108,7 @@ public:
             ASSERT_FALSE(states.empty());
             auto mstate = states.front().get_state();
             ASSERT_TRUE(mstate);
-            const auto& expected_states = calc_refs().second;
+            const auto& expected_states = expected_results.second;
             const float expected_state_val = expected_states[i];
             const float actual_state_val = mstate.data<ov::element_type_traits<ov::element::f32>::value_type>()[0];
             ASSERT_TRUE(abs(expected_state_val - actual_state_val) / abs(expected_state_val) < rel_diff_threshold);
@@ -167,7 +188,7 @@ public:
     }
 
     void run_test() {
-        std::vector<float> vec_state = {0};
+        std::vector<float> vec_state = {2.0};
 
         auto states = inferRequest.query_state();
         ASSERT_FALSE(states.empty());

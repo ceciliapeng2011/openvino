@@ -87,9 +87,13 @@ void MemoryOutput::execute(dnnl::stream strm)  {
 
     auto desc = storage->getDescPtr();
     const auto new_shape = srcMemory.getStaticDims();
-    const auto newDesc = desc->cloneWithNewDims(new_shape, true);
-    storage->redefineDesc(newDesc);
 
+    if (desc->getShape().getStaticDims() != new_shape) {
+        const auto newDesc = desc->cloneWithNewDims(new_shape, true);
+        storage->redefineDesc(newDesc);
+    }
+
+    // DEBUG_LOG(srcMemory.getData(), " -> storage ", storage->getData());
     simple_copy(*storage, srcMemory);
 }
 
@@ -181,6 +185,7 @@ void MemoryInput::execute(dnnl::stream strm) {
     // TODO: Should be simple call of:
     //           dst_mem.load(dataStore, false);
     //       But because of performance reason we use simple manual copy
+    // DEBUG_LOG(dataStore->getData(), " -> graph input ", getChildEdgeAt(0)->getMemory().getData());
     simple_copy(getChildEdgeAt(0)->getMemory(), *dataStore);
 }
 
