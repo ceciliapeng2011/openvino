@@ -754,9 +754,9 @@ void ScaledDotProductAttention::initSupportedPrimitiveDescriptors() {
     auto rtPrecision = getOriginalInputPrecisionAtPort(0);
 
     bool enable_fp16_kvcache = true;
-    const char* enable_fp16 = std::getenv("OV_ENABLE_SDPA_KVCACHE_FP16");
-    if (enable_fp16 && std::atoi(enable_fp16) > 0) {
-        enable_fp16_kvcache = true;
+    const char* enable_fp32 = std::getenv("OV_ENABLE_SDPA_KVCACHE_FP32");
+    if (enable_fp32 && std::atoi(enable_fp32) > 0) {
+        enable_fp16_kvcache = false;
     }
 
     auto kvCachePrecision = (m_config.config.fuse_concat && enable_fp16_kvcache && mayiuse(cpu_isa_t::avx2)) ? ov::element::f16 : rtPrecision;
