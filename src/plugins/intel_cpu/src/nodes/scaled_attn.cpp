@@ -578,6 +578,26 @@ struct MHASingleToken {
     }
 };
 
+// tag dispatch
+template <typename T, typename T2>
+void Function(std::true_type,
+            const PlainTensor<T>& k_input,
+            const PlainTensor<T>& v_input,
+            PlainTensor<T2>& past_k_output,
+            PlainTensor<T2>& past_v_output) {
+    past_k_output = k_input;
+    past_v_output = v_input;
+}
+
+template <typename T, typename T2>
+void Function(std::false_type,
+            const PlainTensor<T>& k_input,
+            const PlainTensor<T>& v_input,
+            PlainTensor<T2>& past_k_output,
+            PlainTensor<T2>& past_v_output) {
+    OPENVINO_THROW("The program shouldn't go here!");
+}
+
 template <ScaledDotProductAttention::KernelTypes KType, typename T, typename T2>
 struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAttention::Executor {
     PlainTensor<T> q_input;           // f32[B, H, L1, S]
@@ -647,8 +667,8 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
             L0 = k_input.size(2) - L1;
             k_input.assert_dims({B, 0, L0 + L1, S}, true);
             v_input.assert_dims({B, 0, L0 + L1, S}, true);
-            past_k_output = static_cast<PlainTensor<T2>>(k_input);
-            past_v_output = static_cast<PlainTensor<T2>>(v_input);
+            // tag dispatch: assign k/v_input to past_k/v_output only when T==T2.
+            Function<T, T2>(std::integral_constant<bool, std::is_same<T, T2>::value>{}, k_input, v_input, past_k_output, past_v_output);
         }
     }
 
@@ -759,7 +779,8 @@ void ScaledDotProductAttention::initSupportedPrimitiveDescriptors() {
         enable_fp16_kvcache = false;
     }
 
-    auto kvCachePrecision = (m_config.config.fuse_concat && enable_fp16_kvcache && mayiuse(cpu_isa_t::avx2)) ? ov::element::f16 : rtPrecision;
+    auto kvCachePrecision = (m_config.config.fuse_concat && enable_fp16_kvcache &&
+                            mayiuse(cpu_isa_t::avx2) && rtPrecision!= ov::element::bf16) ? ov::element::f16 : rtPrecision;
     std::cout << "===================== kvPrecision = " << kvCachePrecision << ", rtPrecision = " << rtPrecision << std::endl;
 
     if (rtPrecision == ov::element::bf16) {
