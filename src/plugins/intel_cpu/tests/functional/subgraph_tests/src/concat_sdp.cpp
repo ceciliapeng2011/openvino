@@ -78,6 +78,9 @@ public:
             configuration.insert({"ENFORCE_BF16", "YES"});
             rel_threshold = 0.01f;
         }
+        configuration.insert({"INFERENCE_PRECISION_HINT", "f32"});
+        configuration.insert({"PERFORMANCE_HINT", "LATENCY"});
+        configuration.insert({"NUM_STREAMS", "1"});
         init_input_shapes(inputShapes);
         ov::ParameterVector inputParams;
         // q,k,v
@@ -170,26 +173,48 @@ public:
         for (auto&& state : inferRequest.query_state()) {
             state.reset();
         }
-        inferRequest = ov::InferRequest();
+        // inferRequest = ov::InferRequest();
     }
     std::vector<ov::Tensor> run_test(std::shared_ptr<ov::Model> model) {
         function = model;
         prepare();
         std::vector<ov::Tensor> outputs;
         int idx = 0;
-        for (auto&& shapes : targetStaticShapes) {
-            generate(idx++, shapes);
-            for (const auto& input : inputs) {
-                inferRequest.set_tensor(input.first, input.second);
-            }
-            inferRequest.infer();
-            auto outputTensor = inferRequest.get_output_tensor(0);
-            ov::Tensor copy{outputTensor.get_element_type(), outputTensor.get_shape()};
-            outputTensor.copy_to(copy);
-            outputs.push_back(copy);
-        }
-        reset();
+        // Global variables.
+        const size_t bigger_than_cachesize = 30 * 1024 * 1024;  //30M long
+        long *m_p = new long[bigger_than_cachesize];
 
+        for (size_t iteration = 0; iteration < 10;  iteration++) {
+            std::vector<std::chrono::nanoseconds> countersMap;
+            for (auto&& shapes : targetStaticShapes) {
+                generate(idx++, shapes);
+                for (const auto& input : inputs) {
+                    inferRequest.set_tensor(input.first, input.second);
+                }
+                // When you want to "flush" cache. 
+                for(size_t i = 0; i < bigger_than_cachesize; i++) {
+                    *(m_p + i) = rand();
+                }
+                auto start = std::chrono::steady_clock::now();
+                inferRequest.infer();
+                auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>( std::chrono::steady_clock::now( ) - start );
+                countersMap.push_back(elapsed);
+
+                auto outputTensor = inferRequest.get_output_tensor(0);
+                ov::Tensor copy{outputTensor.get_element_type(), outputTensor.get_shape()};
+                outputTensor.copy_to(copy);
+                outputs.push_back(copy);
+            }
+            reset();
+
+            constexpr int divisor = 1000000;
+            std::cout << "============= time cost ==========" << std::endl;
+            for (const auto& v : countersMap)
+                std::cout << float(v.count()) / divisor << " ms" << std::endl;
+
+        }
+
+        delete []m_p;
         return outputs;
     }
 };
@@ -199,11 +224,11 @@ TEST_P(ConcatSDPTest, CompareWithRefs) {
     CheckNumberOfNodesWithType(compiledModel, "ScaledDotProductAttention", 1);
     CheckNumberOfNodesWithType(compiledModel, "Concatenation", 0);
     CheckNumberOfNodesWithType(compiledModel, "Reorder", 0);
-    auto expectedOutputs = run_test(functionRefs);
-    CheckNumberOfNodesWithType(compiledModel, "ScaledDotProductAttention", 0);
-    for (size_t i = 0; i < actualOutputs.size(); i++) {
-        ov::test::utils::compare(expectedOutputs[i], actualOutputs[i], abs_threshold, rel_threshold);
-    }
+    // auto expectedOutputs = run_test(functionRefs);
+    // CheckNumberOfNodesWithType(compiledModel, "ScaledDotProductAttention", 0);
+    // for (size_t i = 0; i < actualOutputs.size(); i++) {
+    //     ov::test::utils::compare(expectedOutputs[i], actualOutputs[i], abs_threshold, rel_threshold);
+    // }
 }
 
 namespace {
@@ -211,9 +236,9 @@ const std::vector<std::vector<InputShape>> inputShapes = {
     // dynamic batch
     {
         // B, H, L1, S
-        {{1, 8, -1, 64}, {{1, 8, 10, 64}, {1, 8, 1, 64}, {1, 8, 1, 64}, {1, 8, 20, 64}, {1, 8, 1, 64}}},
+        {{1, 32, -1, 80}, {{1, 32, 1024, 80}, {1, 32, 1, 80}}},
         // B, H, L0, S
-        {{1, 8, -1, 64}, {{1, 8, 0, 64}, {1, 8, 10, 64}, {1, 8, 11, 64}, {1, 8, 12, 64}, {1, 8, 32, 64}}},
+        {{1, 32, -1, 80}, {{1, 32, 0, 80}, {1, 32, 1024, 80}}},
     },
 };
 

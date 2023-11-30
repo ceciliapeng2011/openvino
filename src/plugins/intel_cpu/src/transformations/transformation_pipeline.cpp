@@ -514,6 +514,8 @@ void Transformations::PreLpt(const std::vector<ov::element::Type>& defaultPrecis
     CPU_REGISTER_PASS_COMMON(manager, ov::pass::KeepConstAndDecompression);
     CPU_REGISTER_PASS_COMMON(manager, ov::pass::ConstantFolding);
 
+    CPU_REGISTER_PASS_COMMON(manager, ov::pass::PrintModel, "n0.cpp");
+
     manager.run_passes(model);
 }
 

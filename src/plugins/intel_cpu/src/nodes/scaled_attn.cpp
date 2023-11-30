@@ -31,8 +31,10 @@
 #include "kernels/scaled_attn/dot_product.hpp"
 #include "kernels/scaled_attn/acc_value.hpp"
 #include "kernels/scaled_attn/reduce.hpp"
+#include "utils/profiler.hpp"
 
 #include "common/cpu_convert.h"
+#include "kernels/scaled_attn/attn_memcpy.hpp"
 
 using namespace InferenceEngine;
 using namespace InferenceEngine::Extensions::Cpu::XARCH;
@@ -259,6 +261,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
                     bool has_out_transpose,
                     bool auto_causal,
                     float d_scale = 0.0f) {
+        PROFILE(_prof, "MHAKernel");
         auto B = query.size(0);
         auto H = query.size(1);
         auto q_len = query.size(2);
@@ -331,6 +334,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                     bool has_out_transpose,
                     bool auto_causal,
                     float d_scale = 0.0f) {
+        PROFILE(_prof, "MHAKernel");
         auto B = query.size(0);
         auto H = query.size(1);
         auto q_len = query.size(2);
@@ -480,6 +484,7 @@ struct MHASingleToken {
                     bool has_out_transpose,
                     bool auto_causal,
                     float d_scale = 0.0f) {
+        PROFILE(_prof, "MHASingleToken");
         auto B = query.size(0);
         auto H = query.size(1);
         auto q_len = query.size(2);
@@ -628,6 +633,7 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
                        const PlainTensor<T>& v_input,
                        PlainTensor<T2>& past_k_output,
                        PlainTensor<T2>& past_v_output) {
+        PROFILE(_prof, "concat_pastkv");
         if (config.config.fuse_concat) {
             k_input.assert_dims({B, 0, L1, S}, true);
             v_input.assert_dims({B, 0, L1, S}, true);
@@ -643,8 +649,18 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
             past_k_output = past_k_output.permute({1, 2, 0, 3});
             past_v_output = past_v_output.permute({1, 2, 0, 3});
             parallel_for3d(B, Hk, L1, [&](size_t b, size_t h, size_t m) {
-                cpu_convert(&k_input.at({b, h, m, 0}), &past_k_output.at({b, h, m + L0, 0}), precision_of<T>::value, precision_of<T2>::value, S);
-                cpu_convert(&v_input.at({b, h, m, 0}), &past_v_output.at({b, h, m + L0, 0}), precision_of<T>::value, precision_of<T2>::value, S);
+                // cpu_convert(&k_input.at({b, h, m, 0}), &past_k_output.at({b, h, m + L0, 0}), precision_of<T>::value, precision_of<T2>::value, S);
+                // cpu_convert(&v_input.at({b, h, m, 0}), &past_v_output.at({b, h, m + L0, 0}), precision_of<T>::value, precision_of<T2>::value, S);
+                attn_copy(&past_k_output.at({b, h, m + L0, 0}),
+                          &k_input.at({b, h, m, 0}),
+                          S,
+                          precision_of<T2>::value,
+                          precision_of<T>::value);
+                attn_copy(&past_v_output.at({b, h, m + L0, 0}),
+                          &v_input.at({b, h, m, 0}),
+                          S,
+                          precision_of<T2>::value,
+                          precision_of<T>::value);
             });
             if (!config.skipPastKVCopy) {
                 PlainTensor<T2> past_k_input, past_v_input;
