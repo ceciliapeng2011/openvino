@@ -227,7 +227,7 @@ void mha_single_token_kernel(const ov::intel_cpu::PlainTensor& query,
     parallel_for3d(B, H, q_len, [&](size_t b, size_t h, size_t pq) {
         auto* temp = &buf_attn_score.at<float>({0, b, pq, h, 0});
         size_t temp_stride = buf_attn_score.stride(0);
-        auto* dst = has_out_transpose ? &output_emb.at<T>({b, pq, h * S}) : &output_emb.at<T>({b, h, pq});
+        auto* dst = has_out_transpose ? &output_emb.at<T>({b, pq, h, 0}) : &output_emb.at<T>({b, h, pq});
         attn_reduce(dst, temp, nthr, S, temp_stride);
     });
 }

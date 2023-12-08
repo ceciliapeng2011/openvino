@@ -28,6 +28,7 @@ public:
         bool fuse_concat = false;        // fuse (concat->sdp) ==> sdp
         std::vector<size_t> permute_axes; // not empty means input has transpose. output of permutation is [B,H,L,S]
                                          // e.g. [L,B,H,S] -> permute[1, 2, 0, 3] ->[B, H, L, S]
+        std::vector<size_t> post_permute;
     };
 
     ScaledDotProductAttentionWithKVCache(const OutputVector& args, const Config& cfg);

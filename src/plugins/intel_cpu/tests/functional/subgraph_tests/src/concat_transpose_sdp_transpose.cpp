@@ -22,6 +22,7 @@ namespace SubgraphTestsDefinitions {
 using InputShapeAndTransposeOrder = std::pair<std::vector<InputShape>, std::vector<size_t>>;
 using ConcatSDPTransposeTestParams = std::tuple<ElementType,
                                        InputShapeAndTransposeOrder,
+                                       std::vector<size_t>,         // post transpose order
                                        bool                         // has ShapeOf
                                        >;
 // Subgraph:
@@ -51,8 +52,9 @@ public:
     static std::string getTestCaseName(const testing::TestParamInfo<ConcatSDPTransposeTestParams>& obj) {
         ElementType inType;
         InputShapeAndTransposeOrder inputShapeAndOrders;
+        std::vector<size_t> postSDPATransposeOrders;
         bool hasShapeof;
-        std::tie(inType, inputShapeAndOrders, hasShapeof) = obj.param;
+        std::tie(inType, inputShapeAndOrders, postSDPATransposeOrders, hasShapeof) = obj.param;
         std::ostringstream result;
         std::vector<InputShape>& inputShapes = inputShapeAndOrders.first;
         std::vector<size_t>& transposeOrder = inputShapeAndOrders.second;
@@ -78,6 +80,12 @@ public:
             result << itr << ",";
         }
         result << ")";
+        result << "postSDPATransposeOrders=";
+        result << "(";
+        for (const auto& itr : postSDPATransposeOrders) {
+            result << itr << ",";
+        }
+        result << ")";
 
         return result.str();
     }
@@ -85,8 +93,9 @@ public:
     void SetUp() override {
         ElementType inType;
         InputShapeAndTransposeOrder inputShapeAndOrders;
+        std::vector<size_t> postSDPATransposeOrders;
         bool hasShapeOf;
-        std::tie(inType, inputShapeAndOrders, hasShapeOf) = this->GetParam();
+        std::tie(inType, inputShapeAndOrders, postSDPATransposeOrders, hasShapeOf) = this->GetParam();
         std::vector<InputShape>& inputShapes = inputShapeAndOrders.first;
         std::vector<size_t>& transposeOrder = inputShapeAndOrders.second;
         targetDevice = ov::test::utils::DEVICE_CPU;
@@ -134,28 +143,37 @@ public:
         sdp->set_friendly_name("mha");
 
         // post SDPA transpose + reshape
-        auto get_reshape_order = [] (const ov::PartialShape& qkv_shape, const std::vector<size_t>& transposeOrder) -> std::vector<size_t> {
+        auto get_reshape_order = [] (const ov::PartialShape& qkv_shape, const std::vector<size_t>& transposeOrder, const std::vector<size_t>& postSDPATransposeOrders) -> std::vector<size_t> {
             assert(transposeOrder.size()==4);
+            assert(postSDPATransposeOrders.size()==4);
             auto H = qkv_shape[transposeOrder[1]].get_length();
             auto S = qkv_shape[transposeOrder[3]].get_length();
-            return std::vector<size_t>{0, 0, static_cast<size_t>(H*S)};
-        };
-        const auto reshapeOrder = get_reshape_order(inputDynamicShapes[0], transposeOrder);
-        std::cout << "============ qkv_shape " << inputDynamicShapes[0] << " transpose " << ov::Shape(transposeOrder) << " -> reshape " << ov::Shape(reshapeOrder) << std::endl;
 
-        auto postOrder = op::v0::Constant::create(ov::element::i32, {4}, std::vector<size_t>{0, 2, 1, 3});  // BHLS -> BLHS
+            auto indexH = std::distance(postSDPATransposeOrders.begin(), std::find(postSDPATransposeOrders.begin(), postSDPATransposeOrders.end(), 1));
+            auto indexS = std::distance(postSDPATransposeOrders.begin(), std::find(postSDPATransposeOrders.begin(), postSDPATransposeOrders.end(), 3));
+            assert(std::abs(indexH - indexS) == 1); // HxS
+
+            std::vector<size_t> reshape_order(3, 0);
+            reshape_order[std::min(indexH, indexS)] = static_cast<size_t>(H*S);
+            
+            return reshape_order;
+        };
+        const auto reshapeOrder = get_reshape_order(inputDynamicShapes[0], transposeOrder, postSDPATransposeOrders);
+        std::cout << "============ qkv_shape " << inputDynamicShapes[0] << " transpose " << ov::Shape(transposeOrder) << "postSDPATransposeOrders " << ov::Shape(postSDPATransposeOrders) << " -> reshape " << ov::Shape(reshapeOrder) << std::endl;
+
+        auto postOrder = op::v0::Constant::create(ov::element::i32, {4}, postSDPATransposeOrders);  // BHLS -> BLHS
         auto transposeSDP = std::make_shared<ov::op::v1::Transpose>(sdp, postOrder);
 
         auto constReshape = op::v0::Constant::create(ov::element::i32, {3}, reshapeOrder);
         auto reshapeSDP = std::make_shared<ov::op::v1::Reshape>(transposeSDP, constReshape, true); // BLHS -> B,L,HxS        
 
-        auto add = std::make_shared<op::v1::Add>(reshapeSDP, op::v0::Constant::create(inType, {1}, {1.0f}));
+        // auto add = std::make_shared<op::v1::Add>(reshapeSDP, op::v0::Constant::create(inType, {1}, {1.0f}));
         auto pastk_assign = std::make_shared<op::v6::Assign>(concatK, var_k);
         auto pastv_assign = std::make_shared<op::v6::Assign>(concatV, var_v);
         pastk_assign->set_friendly_name("pastk_w");
         pastv_assign->set_friendly_name("pastv_w");
 
-        ResultVector results{std::make_shared<ov::op::v0::Result>(add)};
+        ResultVector results{std::make_shared<ov::op::v0::Result>(reshapeSDP)};
         if (hasShapeOf) {
             results.push_back(std::make_shared<ov::op::v0::Result>(pastk_shapeof));
             results.push_back(std::make_shared<ov::op::v0::Result>(pastv_shapeof));
@@ -250,7 +268,7 @@ TEST_P(ConcatSDPTransposeTest, CompareWithRefs) {
     CheckNumberOfNodesWithType(compiledModel, "ScaledDotProductAttention", 1);
     CheckNumberOfNodesWithType(compiledModel, "Concatenation", 0);
     CheckNumberOfNodesWithType(compiledModel, "Reorder", 0);
-    CheckNumberOfNodesWithType(compiledModel, "Transpose", 1);  // TODO
+    CheckNumberOfNodesWithType(compiledModel, "Transpose", 0);  // TODO
     auto expectedOutputs = run_test(functionRefs);
     CheckNumberOfNodesWithType(compiledModel, "ScaledDotProductAttention", 0);
     for (size_t i = 0; i < actualOutputs.size(); i++) {
@@ -295,10 +313,16 @@ const std::vector<InputShapeAndTransposeOrder> inputShapeAndReorders = {
     },
 };
 
+const std::vector<std::vector<size_t>> postTransposeReorders = {
+    {0, 2, 1, 3},       // SDPA BHLS -> BLHS (llama, QWen)
+    {2, 0, 1, 3},       // SDPA BHLS -> LBHS (chatglm)
+};
+
 INSTANTIATE_TEST_SUITE_P(smoke_ConcatSDPTransposeTest,
                          ConcatSDPTransposeTest,
                          ::testing::Combine(::testing::Values(ElementType::f32),
                                             ::testing::ValuesIn(inputShapeAndReorders),
+                                            ::testing::ValuesIn(postTransposeReorders),
                                             ::testing::Values(true, false)),
                          ConcatSDPTransposeTest::getTestCaseName);
 

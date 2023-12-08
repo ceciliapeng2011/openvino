@@ -14,5 +14,11 @@ public:
     StatefulTransposeSDPAFusion();
 };
 
+class SDPATransposeReshapeFusion : public ov::pass::MatcherPass {
+public:
+    OPENVINO_RTTI("SDPATransposeReshapeFusion", "0");
+    SDPATransposeReshapeFusion();
+};
+
 }   // namespace intel_cpu
 }   // namespace ov

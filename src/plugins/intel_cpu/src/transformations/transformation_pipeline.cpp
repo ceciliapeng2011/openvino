@@ -669,6 +669,8 @@ void Transformations::PostLpt() {
     CPU_REGISTER_PASS_COMMON(postLPTPassManager, ov::pass::PrintModel, "n0_preStatefulTransposeSDPAFusion.cpp");
     CPU_REGISTER_PASS_X64(postLPTPassManager, StatefulTransposeSDPAFusion);
     CPU_REGISTER_PASS_COMMON(postLPTPassManager, ov::pass::PrintModel, "n1_postStatefulTransposeSDPAFusion.cpp");
+    CPU_REGISTER_PASS_X64(postLPTPassManager, SDPATransposeReshapeFusion);
+    CPU_REGISTER_PASS_COMMON(postLPTPassManager, ov::pass::PrintModel, "n1_postSDPATransposeReshapeFusion.cpp");
     postLPTPassManager.run_passes(model);
 }
 
