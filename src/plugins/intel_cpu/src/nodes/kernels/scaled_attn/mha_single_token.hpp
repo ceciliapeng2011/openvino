@@ -24,7 +24,7 @@ void mha_single_token(const ov::intel_cpu::PlainTensor& query,
                       ov::intel_cpu::PlainTensor& output_emb,
                       ov::intel_cpu::PlainTensor& buf_attn_w,
                       ov::intel_cpu::PlainTensor& buf_attn_score,
-                      bool has_out_transpose,
+                      const std::vector<size_t>& post_permute,
                       bool auto_causal,
                       float d_scale);
 

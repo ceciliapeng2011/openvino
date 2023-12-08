@@ -97,7 +97,7 @@ struct MHAKernel {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
-                    bool has_out_transpose,
+                    const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
         auto B = query.size(0);
@@ -159,8 +159,8 @@ struct MHAKernel {
                     accumulate(word_vec.data(), v, head_size, attn_score[n]);
                 }
 
-                // output [B, L1, H*head_size]
-                auto* out = has_out_transpose ? &output_emb.at<T>({b, m, h * head_size}) : &output_emb.at<T>({b, h, m});
+                // output_emb [B, H, L, head_size] if post_permute.empty() else []
+                auto* out = !post_permute.empty() ? &output_emb.at<T>({b, m, h * head_size}) : &output_emb.at<T>({b, h, m});
                 std::copy(word_vec.begin(), word_vec.end(), out);
             }
         });
@@ -184,7 +184,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
     using tag = dnnl::memory::format_tag;
     using dt = dnnl::memory::data_type;
 
-    void prepare_prim(dnnl::stream strm, size_t B, size_t H, size_t Hk, size_t q_len, size_t kv_len, size_t S, bool has_out_transpose) {
+    void prepare_prim(dnnl::stream strm, size_t B, size_t H, size_t Hk, size_t q_len, size_t kv_len, size_t S, const std::vector<size_t>& post_permute) {
         auto make_dnnl_dims = [](const std::vector<size_t>& dims) {
             dnnl::memory::dims dnnl_dims(dims.size());
             for (size_t i = 0; i < dims.size(); i++)
@@ -207,7 +207,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
         weight_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, kv_len}), qkv_dt, tag::abcd);
         v_md = dnnl::memory::desc(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, tag::abcd);
         out_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, S}), qkv_dt, tag::abcd);
-        if (has_out_transpose)
+        if (!post_permute.empty())
             out_md = out_md.permute_axes({0, 2, 1, 3});
         auto wv_pd = dnnl::matmul::primitive_desc(strm.get_engine(), weight_md, v_md, out_md);
         wv_prim = dnnl::matmul(wv_pd);
@@ -253,7 +253,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
-                    bool has_out_transpose,
+                    const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
         auto B = query.size(0);
@@ -266,7 +266,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
         if (d_scale == 0.0f)
             d_scale = 1.0f / sqrt(head_size);
 
-        prepare_prim(strm, B, H, Hk, q_len, kv_len, head_size, has_out_transpose);
+        prepare_prim(strm, B, H, Hk, q_len, kv_len, head_size, post_permute);
         exec_qk(strm, query, present_key);
 
         PlainTensor score;
@@ -326,7 +326,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
-                    bool has_out_transpose,
+                    const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
         auto B = query.size(0);
@@ -440,8 +440,8 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                        v_ptr,
                        present_value.stride(2),
                        0.f,
-                       has_out_transpose ? &output_emb.at<float>({b, m_start, h, 0}) : &output_emb.at<float>({b, h, m_start}),
-                       has_out_transpose ? output_emb.stride(1) : output_emb.stride(2),
+                       !post_permute.empty() ? &output_emb.at<float>({b, m_start, h * head_size}) : &output_emb.at<float>({b, h, m_start}),
+                       !post_permute.empty() ? output_emb.stride(1) : output_emb.stride(2),
                        1);
         });
     }
@@ -469,11 +469,11 @@ struct MHASingleToken {
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
                     const PlainTensor& beams,
-                    bool has_out_transpose,
+                    const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
         mha_single_token(query, present_key, present_value, alibi_mask, attention_mask, beams, output_emb,
-            m_attn_w, m_temp, has_out_transpose, auto_causal, d_scale);
+            m_attn_w, m_temp, post_permute, auto_causal, d_scale);
     }
 };
 
@@ -540,7 +540,7 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
     }
 
     void execute(dnnl::stream strm, const std::vector<MemoryPtr>& inputs, const std::vector<MemoryPtr>& outputs) override {
-        bool has_out_transpose = config.config.output_BLHxS;
+        const auto& post_permute = config.config.post_permute;
         bool fuse_causal_attn = config.config.fuse_causal_attn;
         bool is_causal = config.config.is_causal;
         const bool fuse_concat = config.config.fuse_concat;
@@ -614,7 +614,7 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
         if (L1 > 1) {
             // multi-token version
             kernel(strm, q_input, k_input, v_input, {}, use_attn_mask ? attn_mask : PlainTensor(),
-                   output_emb, has_out_transpose, auto_causal, scale_input);
+                   output_emb, post_permute, auto_causal, scale_input);
         } else {
             // 1-token version
             // for second token, using a special AVX2/AVX512 float path:
@@ -622,7 +622,7 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
             //  2, using float will save the repack cost which typically is required for bf16/int8 opt
             //  3, using dot product can leverage the SIMD while easily adapt to indirect kv cache
             kernel_single_token(q_input, present_key, present_value, {}, use_attn_mask ? attn_mask : PlainTensor(),
-                        output_emb, beam_table, has_out_transpose, auto_causal, scale_input);
+                        output_emb, beam_table, post_permute, auto_causal, scale_input);
         }
     }
 };

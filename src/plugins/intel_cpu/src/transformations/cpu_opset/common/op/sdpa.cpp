@@ -30,7 +30,7 @@ void ov::intel_cpu::ScaledDotProductAttentionWithKVCache::validate_and_infer_typ
     auto past_kv_ps = get_input_partial_shape(input_num - 1);
 
     auto output_logits = q_ps;
-    // NODE_VALIDATION_CHECK(this, m_config.output_BLHxS == false);
+
     NODE_VALIDATION_CHECK(this, q_ps.size() >= 3);
     // permute_axes from original to [B, H, L, S]
     const auto& permute_axes = this->m_config.permute_axes;
@@ -69,13 +69,22 @@ void ov::intel_cpu::ScaledDotProductAttentionWithKVCache::validate_and_infer_typ
     const auto& post_permute = this->m_config.post_permute;
     std::cout << __LINE__ << "==================== output_logits " << output_logits << ", post_permute " << ov::PartialShape(post_permute) << std::endl;
     if (!post_permute.empty()) {
-        if (output_logits.rank().is_static()) {
-            const auto pre_transpose_logits = output_logits;
-            // permute output_logits according to post Transpose orders
-            for (size_t i = 0; i < output_logits.size(); i++) {
-                output_logits[i] = pre_transpose_logits[post_permute[i]];
-            }
+        // output_logits BHLS
+        // The actual index of B is permute[0], H is permute[1], L is permute[2], S is permute[3]
+        OPENVINO_ASSERT(std::abs(static_cast<int64_t>(post_permute[1]) - static_cast<int64_t>(post_permute[3])) == 1); // HxS
+        const auto indexHS = std::min(post_permute[1], post_permute[3]);
+
+        std::map<size_t, ov::Dimension> result;
+        result[indexHS] = output_logits[1] * output_logits[3];
+        result[post_permute[0]] = output_logits[0];
+        result[post_permute[2]] = output_logits[2];
+
+        std::vector<ov::Dimension> values;
+        for (const auto& entry : result) {
+            values.push_back(entry.second);
         }
+
+        output_logits = ov::PartialShape{values};
         std::cout << __LINE__ << "==================== output_logits " << output_logits << std::endl;
     }
 
@@ -87,7 +96,6 @@ void ov::intel_cpu::ScaledDotProductAttentionWithKVCache::validate_and_infer_typ
 bool ov::intel_cpu::ScaledDotProductAttentionWithKVCache::visit_attributes(ov::AttributeVisitor& visitor) {
     INTERNAL_OP_SCOPE(ScaledDotProductAttentionWithKVCache_visit_attributes);
     visitor.start_structure("config");
-    visitor.on_attribute("output_BLHxS", m_config.output_BLHxS);
     visitor.on_attribute("fuse_causal_attn", m_config.fuse_causal_attn);
     visitor.on_attribute("is_causal", m_config.is_causal);
     visitor.on_attribute("fuse_concat", m_config.fuse_concat);

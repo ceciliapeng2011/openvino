@@ -129,7 +129,7 @@ void mha_single_token_kernel(const ov::intel_cpu::PlainTensor& query,
                              ov::intel_cpu::PlainTensor& output_emb,
                              ov::intel_cpu::PlainTensor& buf_attn_w,
                              ov::intel_cpu::PlainTensor& buf_attn_score,
-                             bool has_out_transpose,
+                             const std::vector<size_t>& post_permute,
                              bool auto_causal,
                              float d_scale) {
     ov::intel_cpu::PlainTensor causal_mask;
@@ -227,7 +227,7 @@ void mha_single_token_kernel(const ov::intel_cpu::PlainTensor& query,
     parallel_for3d(B, H, q_len, [&](size_t b, size_t h, size_t pq) {
         auto* temp = &buf_attn_score.at<float>({0, b, pq, h, 0});
         size_t temp_stride = buf_attn_score.stride(0);
-        auto* dst = has_out_transpose ? &output_emb.at<T>({b, pq, h, 0}) : &output_emb.at<T>({b, h, pq});
+        auto* dst = !post_permute.empty() ? &output_emb.at<T>({b, pq, h * S}) : &output_emb.at<T>({b, h, pq});
         attn_reduce(dst, temp, nthr, S, temp_stride);
     });
 }
@@ -241,7 +241,7 @@ void mha_single_token(const ov::intel_cpu::PlainTensor& query,
                       ov::intel_cpu::PlainTensor& output_emb,
                       ov::intel_cpu::PlainTensor& buf_attn_w,
                       ov::intel_cpu::PlainTensor& buf_attn_score,
-                      bool has_out_transpose,
+                      const std::vector<size_t>& post_permute,
                       bool auto_causal,
                       float d_scale) {
     if (query.get_precision() == ov::element::bf16) {
@@ -254,7 +254,7 @@ void mha_single_token(const ov::intel_cpu::PlainTensor& query,
                                                             output_emb,
                                                             buf_attn_w,
                                                             buf_attn_score,
-                                                            has_out_transpose,
+                                                            post_permute,
                                                             auto_causal,
                                                             d_scale);
     } else if (query.get_precision() == ov::element::f32) {
@@ -268,7 +268,7 @@ void mha_single_token(const ov::intel_cpu::PlainTensor& query,
                                                         output_emb,
                                                         buf_attn_w,
                                                         buf_attn_score,
-                                                        has_out_transpose,
+                                                        post_permute,
                                                         auto_causal,
                                                         d_scale);
         } else {
@@ -281,7 +281,7 @@ void mha_single_token(const ov::intel_cpu::PlainTensor& query,
                                                 output_emb,
                                                 buf_attn_w,
                                                 buf_attn_score,
-                                                has_out_transpose,
+                                                post_permute,
                                                 auto_causal,
                                                 d_scale);
         }

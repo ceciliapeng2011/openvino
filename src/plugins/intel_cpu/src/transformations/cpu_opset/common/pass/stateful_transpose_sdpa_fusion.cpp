@@ -151,10 +151,11 @@ SDPATransposeReshapeFusion::SDPATransposeReshapeFusion() {
     auto sdpa = std::make_shared<ov::pass::pattern::op::Or>(OutputVector{sdp0, sdp1, sdp2});
 
     // post SDPA Transpose and Reshape
-    auto order_out = wrap_type<opset6::Constant>();
-    auto transpose_out = wrap_type<opset6::Transpose>({sdpa->output(0), order_out});
+    auto transpose_order = wrap_type<opset6::Constant>();
+    auto transpose_out = wrap_type<opset6::Transpose>({sdpa->output(0), transpose_order});
 
-    auto reshape_out = wrap_type<opset6::Reshape>({transpose_out, any_input()});
+    auto reshape_order = wrap_type<opset6::Constant>();
+    auto reshape_out = wrap_type<opset6::Reshape>({transpose_out, reshape_order});
 
     ov::matcher_pass_callback callback = [=](Matcher& m) {
         const auto& pattern_map = m.get_pattern_value_map();
@@ -162,8 +163,9 @@ SDPATransposeReshapeFusion::SDPATransposeReshapeFusion() {
         ov::NodeVector new_ops;
 
         const auto reshape_node = ov::as_type_ptr<opset6::Reshape>(root);
+        const auto reshape_order_node = ov::as_type_ptr<opset6::Constant>(pattern_map.at(reshape_order).get_node_shared_ptr());
         const auto transpose_node = ov::as_type_ptr<opset6::Transpose>(pattern_map.at(transpose_out).get_node_shared_ptr());
-        const auto transpose_order_node = ov::as_type_ptr<opset6::Constant>(pattern_map.at(order_out).get_node_shared_ptr());
+        const auto transpose_order_node = ov::as_type_ptr<opset6::Constant>(pattern_map.at(transpose_order).get_node_shared_ptr());
 
         auto sdp_node = std::dynamic_pointer_cast<ov::intel_cpu::ScaledDotProductAttentionWithKVCache>(transpose_node->get_input_node_shared_ptr(0));
         if (!sdp_node) {
@@ -173,14 +175,17 @@ SDPATransposeReshapeFusion::SDPATransposeReshapeFusion() {
         ov::intel_cpu::ScaledDotProductAttentionWithKVCache::Config config;
         config = sdp_node->get_config();
         // update post_permute
-        const auto& permute_axes = transpose_order_node->cast_vector<int32_t>();
+        // output_logits BHLS
+        // The actual index of B is permute[0], H is permute[1], L is permute[2], S is permute[3]
+        const auto& permute_axes = transpose_order_node->cast_vector<size_t>();
         OPENVINO_ASSERT(permute_axes.size() == 4);
-        config.post_permute.resize(permute_axes.size());
-        for (size_t i = 0; i < config.post_permute.size(); i++) {
-            config.post_permute[i] = static_cast<size_t>(permute_axes[i]);
-            config.output_BLHxS = true;
-        }
-        auto& old_node = transpose_node;
+        const auto& reshape_axes = reshape_order_node->cast_vector<size_t>();
+        OPENVINO_ASSERT(reshape_axes.size() == 3);
+        OPENVINO_ASSERT(std::abs(static_cast<int64_t>(permute_axes[1]) - static_cast<int64_t>(permute_axes[3])) == 1); // HxS
+        std::cout << __LINE__ << "==================== reshape_axes " << ov::PartialShape(reshape_axes) << ", permute_axes " << ov::PartialShape(permute_axes) << std::endl;
+        config.post_permute = permute_axes;
+
+        auto& old_node = reshape_node;
         auto new_node = std::make_shared<ov::intel_cpu::ScaledDotProductAttentionWithKVCache>(sdp_node->input_values(), config);
         new_node->set_friendly_name(sdp_node->get_friendly_name()+"/fuseTranspose");
         new_ops.push_back(new_node);
