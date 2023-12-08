@@ -227,7 +227,11 @@ void mha_single_token_kernel(const ov::intel_cpu::PlainTensor& query,
     parallel_for3d(B, H, q_len, [&](size_t b, size_t h, size_t pq) {
         auto* temp = &buf_attn_score.at<float>({0, b, pq, h, 0});
         size_t temp_stride = buf_attn_score.stride(0);
-        auto* dst = !post_permute.empty() ? &output_emb.at<T>({b, pq, h * S}) : &output_emb.at<T>({b, h, pq});
+        std::vector<size_t> coord(3, 0);
+        coord[post_permute[0]] = b;
+        coord[post_permute[1]] = h * S;
+        coord[post_permute[2]] = pq;
+        auto* dst = !post_permute.empty() ? &output_emb.at<T>(coord) : &output_emb.at<T>({b, h, pq});
         attn_reduce(dst, temp, nthr, S, temp_stride);
     });
 }

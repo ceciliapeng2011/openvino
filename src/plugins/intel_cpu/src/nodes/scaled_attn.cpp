@@ -159,8 +159,14 @@ struct MHAKernel {
                     accumulate(word_vec.data(), v, head_size, attn_score[n]);
                 }
 
-                // output_emb [B, H, L, head_size] if post_permute.empty() else []
-                auto* out = !post_permute.empty() ? &output_emb.at<T>({b, m, h * head_size}) : &output_emb.at<T>({b, h, m});
+                // output [B, L1, H*head_size]
+                // output_logits BHLS
+                // The actual index of B is permute[0], H is permute[1], L is permute[2], S is permute[3]
+                std::vector<size_t> coord(3, 0);
+                coord[post_permute[0]] = b;
+                coord[post_permute[1]] = h * head_size;
+                coord[post_permute[2]] = m;
+                auto* out = !post_permute.empty() ? &output_emb.at<T>(coord) : &output_emb.at<T>({b, h, m});
                 std::copy(word_vec.begin(), word_vec.end(), out);
             }
         });
@@ -207,8 +213,17 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
         weight_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, kv_len}), qkv_dt, tag::abcd);
         v_md = dnnl::memory::desc(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, tag::abcd);
         out_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, S}), qkv_dt, tag::abcd);
-        if (!post_permute.empty())
-            out_md = out_md.permute_axes({0, 2, 1, 3});
+        if (!post_permute.empty()) {
+            std::vector<int> permutation;
+            std::copy(post_permute.begin(), post_permute.end(), std::back_inserter(permutation));
+            std::cout << "========";
+            for (auto& p : permutation)
+                std::cout << p << ",";
+            std::cout << std::endl;
+            out_md = out_md.permute_axes(permutation);
+        }
+        // if (!post_permute.empty())
+        //     out_md = out_md.permute_axes({0, 2, 1, 3});
         auto wv_pd = dnnl::matmul::primitive_desc(strm.get_engine(), weight_md, v_md, out_md);
         wv_prim = dnnl::matmul(wv_pd);
 
@@ -429,6 +444,12 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                              kv_len,
                              ov::element::f32);
             }
+            // output_logits BHLS
+            // The actual index of B is permute[0], H is permute[1], L is permute[2], S is permute[3]
+            std::vector<size_t> coord(3, 0);
+            coord[post_permute[0]] = b;
+            coord[post_permute[1]] = h * head_size;
+            coord[post_permute[2]] = m_start;
             mlas_sgemm("N",
                        "N",
                        m_cnt,
@@ -440,8 +461,8 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                        v_ptr,
                        present_value.stride(2),
                        0.f,
-                       !post_permute.empty() ? &output_emb.at<float>({b, m_start, h * head_size}) : &output_emb.at<float>({b, h, m_start}),
-                       !post_permute.empty() ? output_emb.stride(1) : output_emb.stride(2),
+                       !post_permute.empty() ? &output_emb.at<float>(coord) : &output_emb.at<float>({b, h, m_start}),
+                       !post_permute.empty() ? output_emb.stride(post_permute[2]) : output_emb.stride(2),
                        1);
         });
     }

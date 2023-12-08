@@ -67,7 +67,6 @@ void ov::intel_cpu::ScaledDotProductAttentionWithKVCache::validate_and_infer_typ
     }
 
     const auto& post_permute = this->m_config.post_permute;
-    std::cout << __LINE__ << "==================== output_logits " << output_logits << ", post_permute " << ov::PartialShape(post_permute) << std::endl;
     if (!post_permute.empty()) {
         // output_logits BHLS
         // The actual index of B is permute[0], H is permute[1], L is permute[2], S is permute[3]
@@ -85,7 +84,6 @@ void ov::intel_cpu::ScaledDotProductAttentionWithKVCache::validate_and_infer_typ
         }
 
         output_logits = ov::PartialShape{values};
-        std::cout << __LINE__ << "==================== output_logits " << output_logits << std::endl;
     }
 
     set_output_type(0, get_input_element_type(0), output_logits);

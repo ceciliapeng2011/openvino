@@ -26,8 +26,10 @@ public:
         bool fuse_concat = false;        // fuse (concat->sdp) ==> sdp
         std::vector<size_t> permute_axes; // not empty means input has transpose. output of permutation is [B,H,L,S]
                                          // e.g. [L,B,H,S] -> permute[1, 2, 0, 3] ->[B, H, L, S]
-        std::vector<size_t> post_permute;  // should be of size 3. Non-empty means output_emb has transpose and reshape. output of permutation is [B,L,HxS]
-                                           // e.g. [B,H,L,S] -> permute[0,2,1,3] -> [B,L,H,S] -> reshape[0,0,HxS] -> [B,L,HxS]  equals [B,H,L,S] -> permute[0,2,1] -> [B,L,HxS]
+        std::vector<size_t> post_permute;  // should be of size 4. Non-empty means output_emb is fused by post transpose and reshape. It is a reverse of transpose_order, thus
+                                           // the target shape is [B, H, L, S]. 
+                                           // e.g. [B,H,L,S] -> permute[2, 0, 1, 3] -> [L,B,H,S] -> reshape[0,0,HxS] -> [L,B,HxS]. The process is represented with post_permute
+                                           // [1, 2, 0, 3], a reverse of permute.
     };
 
     ScaledDotProductAttentionWithKVCache(const OutputVector& args, const Config& cfg);
