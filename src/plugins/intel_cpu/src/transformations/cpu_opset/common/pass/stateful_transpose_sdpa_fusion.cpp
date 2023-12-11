@@ -122,7 +122,7 @@ StatefulTransposeSDPAFusion::StatefulTransposeSDPAFusion() {
         }
         auto& old_node = sdp_node;
         auto new_node = std::make_shared<ov::intel_cpu::ScaledDotProductAttentionWithKVCache>(args, config);
-        new_node->set_friendly_name(old_node->get_friendly_name());
+        new_node->set_friendly_name(sdp_node->get_friendly_name()+"/fusePreTranspose");
         ov::replace_node(old_node, {new_node->output(0)});
         if (assign_cvt_k_node)
             assign_cvt_k_node->set_arguments({new_node->output(1)});
@@ -200,7 +200,7 @@ SDPATransposeReshapeFusion::SDPATransposeReshapeFusion() {
 
         auto& old_node = reshape_node;
         auto new_node = std::make_shared<ov::intel_cpu::ScaledDotProductAttentionWithKVCache>(sdp_node->input_values(), config);
-        new_node->set_friendly_name(sdp_node->get_friendly_name()+"/fuseTranspose");
+        new_node->set_friendly_name(sdp_node->get_friendly_name()+"/fusePostTranspose");
         new_ops.push_back(new_node);
 
         ov::copy_runtime_info(old_node, new_ops);
