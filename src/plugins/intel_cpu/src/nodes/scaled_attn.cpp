@@ -97,6 +97,7 @@ struct MHAKernel {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
+                    const std::vector<size_t>& pre_permute,
                     const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
@@ -105,6 +106,8 @@ struct MHAKernel {
         auto q_len = query.size(2);
         auto head_size = query.size(3);
         auto kv_len = present_key.size(2);
+
+        (void)pre_permute;
 
         if (d_scale == 0.0f)
             d_scale = 1.0f / sqrt(head_size);
@@ -192,16 +195,43 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
     using tag = dnnl::memory::format_tag;
     using dt = dnnl::memory::data_type;
 
-    void prepare_prim(dnnl::stream strm, size_t B, size_t H, size_t Hk, size_t q_len, size_t kv_len, size_t S, const std::vector<size_t>& post_permute) {
+    void prepare_prim(dnnl::stream strm, size_t B, size_t H, size_t Hk, size_t q_len, size_t kv_len, size_t S, const std::vector<size_t>& pre_permute, const std::vector<size_t>& post_permute) {
         auto make_dnnl_dims = [](const std::vector<size_t>& dims) {
             dnnl::memory::dims dnnl_dims(dims.size());
             for (size_t i = 0; i < dims.size(); i++)
                 dnnl_dims[i] = static_cast<dnnl::memory::dim>(dims[i]);
             return dnnl_dims;
         };
+        auto make_permuted_strides = [](const std::vector<size_t>& dims, const std::vector<size_t>& permute) {
+            auto make_strides = [](const std::vector<size_t>& dims) -> dnnl::memory::dims {
+                dnnl::memory::dims strides(dims.size());
+                size_t stride = 1;
+                for (int i = strides.size() - 1; i >= 0; i--) {
+                    strides[i] = stride;
+                    stride *= dims[i];
+                }
+                return strides;
+            };
+
+            if (permute.empty()) return make_strides(dims);
+
+            std::vector<size_t> src_dims(dims.size());
+            //e.g. chatglm: BHLS <- permute(1,2,0,3) <- LBHS;
+            //     qwen:    BHLS <- permute(0,2,1,3) <- BLHS
+            for (size_t i = 0; i < dims.size(); i++)
+                src_dims[permute[i]] = dims[i];
+
+            const auto src_strides = make_strides(src_dims);
+
+            dnnl::memory::dims permuted_strides(dims.size());
+            for (size_t i = 0; i < dims.size(); i++)
+                permuted_strides[i] = static_cast<dnnl::memory::dim>(src_strides[permute[i]]);
+            std::cout << "============ make_strides" << ov::PartialShape(dims) << "<- permute" << ov::PartialShape(permute) << " strides" << ov::PartialShape(permuted_strides) << std::endl;
+            return permuted_strides;
+        };
         auto qkv_dt = precision_of<T>::value == ov::element::f32 ? dt::f32 : dt::bf16;
-        dnnl::memory::desc cur_q_md(make_dnnl_dims({B, H, q_len, S}), qkv_dt, tag::abcd);
-        dnnl::memory::desc cur_k_md(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, tag::abcd);
+        dnnl::memory::desc cur_q_md(make_dnnl_dims({B, H, q_len, S}), qkv_dt, make_permuted_strides({B, H, q_len, S}, pre_permute));
+        dnnl::memory::desc cur_k_md(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, make_permuted_strides({B, Hk, kv_len, S}, pre_permute));
         if (cur_q_md == q_md && cur_k_md == k_md)
             return;
 
@@ -213,8 +243,18 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
         qk_prim = dnnl::matmul(qk_pd);
 
         weight_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, kv_len}), qkv_dt, tag::abcd);
-        v_md = dnnl::memory::desc(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, tag::abcd);
-        out_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, S}), qkv_dt, tag::abcd);
+        v_md = dnnl::memory::desc(make_dnnl_dims({B, Hk, kv_len, S}), qkv_dt, make_permuted_strides({B, Hk, kv_len, S}, pre_permute));
+        auto get_reverse_order = [] (const std::vector<size_t>& order) -> std::vector<size_t> {
+            std::vector<size_t> reverse;
+            reverse.resize(order.size());
+            for (size_t i = 0; i < order.size(); i++) {
+                const auto itr = std::find(order.begin(), order.end(), i);
+                assert(itr != order.end());
+                reverse[i] = std::distance(order.begin(), itr);
+            }
+            return reverse;
+        };
+        out_md = dnnl::memory::desc(make_dnnl_dims({B, H, q_len, S}), qkv_dt, make_permuted_strides({B, H, q_len, S}, get_reverse_order(post_permute)));
 
         auto wv_pd = dnnl::matmul::primitive_desc(strm.get_engine(), weight_md, v_md, out_md);
         wv_prim = dnnl::matmul(wv_pd);
@@ -260,6 +300,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
+                    const std::vector<size_t>& pre_permute,
                     const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
@@ -273,7 +314,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_ONEDNN, T> {
         if (d_scale == 0.0f)
             d_scale = 1.0f / sqrt(head_size);
 
-        prepare_prim(strm, B, H, Hk, q_len, kv_len, head_size, post_permute);
+        prepare_prim(strm, B, H, Hk, q_len, kv_len, head_size, pre_permute, post_permute);
         exec_qk(strm, query, present_key);
 
         PlainTensor score;
@@ -333,6 +374,7 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
                     const PlainTensor& alibi_mask,
                     const PlainTensor& attention_mask,
                     PlainTensor& output_emb,
+                    const std::vector<size_t>& pre_permute,
                     const std::vector<size_t>& post_permute,
                     bool auto_causal,
                     float d_scale = 0.0f) {
@@ -349,6 +391,8 @@ struct MHAKernel<ScaledDotProductAttention::KT_MLAS, float> {
         auto k_stride_s = present_key.stride(3);
 
         auto m_blocks = (q_len + m_block_size - 1) / m_block_size;
+
+        (void)pre_permute;
 
         parallel_for3d(B, H, m_blocks, [&](size_t b, size_t h, size_t m_blk) {
             auto thread_id = parallel_get_thread_num();
@@ -629,7 +673,7 @@ struct ScaledDotProductAttention::AttentionExecutor : public ScaledDotProductAtt
         if (L1 > 1) {
             // multi-token version
             kernel(strm, q_input, k_input, v_input, {}, use_attn_mask ? attn_mask : PlainTensor(),
-                   output_emb, post_permute, auto_causal, scale_input);
+                   output_emb, permute_axes, post_permute, auto_causal, scale_input);
         } else {
             // 1-token version
             // for second token, using a special AVX2/AVX512 float path:
@@ -754,11 +798,11 @@ void ScaledDotProductAttention::createPrimitive() {
     } else {
         // only support bf16/f32
         rtPrecision = ov::element::f32;
-#ifdef OV_CPU_WITH_MLAS
-        m_executor = std::make_shared<AttentionExecutor<KT_MLAS, float>>(m_config);
-#else
+// #ifdef OV_CPU_WITH_MLAS
+//         m_executor = std::make_shared<AttentionExecutor<KT_MLAS, float>>(m_config);
+// #else
         m_executor = std::make_shared<AttentionExecutor<KT_ONEDNN, float>>(m_config);
-#endif
+// #endif
     }
 }
 
