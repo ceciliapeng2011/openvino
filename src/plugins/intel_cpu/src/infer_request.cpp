@@ -310,7 +310,7 @@ void SyncInferRequest::change_default_ptr() {
 
                 outputMemMngr->setMemMngrResize(memMngr);
                 DEBUG_LOG("reset proxy ", outputMemMngr, ", actual ", controlBlock.currentMemMngr(), " graph ", m_graph, " inferrequest ", this);
-                DEBUG_LOG(name, ", tensor ", controlBlock.tensor());
+                DEBUG_LOG(name, ", tensor ", controlBlock.tensor()->data());
             } else {
                 outputMemMngr->reset(); // switch to the internal memory since memory sharing is no longer possible
             }

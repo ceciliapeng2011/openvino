@@ -284,7 +284,22 @@ std::ostream & operator<<(std::ostream & os, const Node &c_node) {
             os << node_id(*edge->getParent());
             auto ptr = edge->getMemoryPtr();
             if (ptr) {
+                auto desc = &(ptr->getDesc());
                 os << "_" << ptr->getData();
+                if (ptr->getDesc().getShape().isStatic()) {
+                    os << "_";
+                    auto shape = ptr->getDesc().getShape().getDims();
+                    if (shape_size(shape) <= 16) {
+                        auto tensor = std::make_shared<ngraph::runtime::HostTensor>(desc->getPrecision(), shape, ptr->getData());
+                        auto constop = std::make_shared<ov::op::v0::Constant>(tensor);
+                        for (auto & v : constop->get_value_strings()) {
+                            os << comma << v;
+                            comma = ",";
+                        }
+                    } else {
+                        os << "...";
+                    }
+                }
             }
             if (!is_single_output_port(*n))
                 os << "[" << edge->getInputNum() << "]";
@@ -299,7 +314,7 @@ std::ostream & operator<<(std::ostream & os, const Node &c_node) {
             void * data = pmem->getData();
             auto shape = pmem->getDesc().getShape().getDims();
 
-            if (shape_size(shape) <= 8) {
+            if (shape_size(shape) <= 16) {
                 auto type = pmem->getDesc().getPrecision();
                 auto tensor = std::make_shared<ngraph::runtime::HostTensor>(type, shape, data);
                 auto constop = std::make_shared<ov::op::v0::Constant>(tensor);

@@ -45,9 +45,10 @@ private:
 
     class PortMapHelper {
     public:
-        PortMapHelper(const MemoryPtr& from, const std::deque<MemoryPtr>& to, const dnnl::engine& eng);
+        PortMapHelper(const MemoryPtr& from, const std::deque<MemoryPtr>& to, const dnnl::engine& eng, const bool canBeInPlace);
+        PortMapHelper() = delete;
         ~PortMapHelper() = default;
-        void execute(dnnl::stream& strm);
+        void execute(dnnl::stream& strm, const bool isInputPortMap);
 
     private:
         void redefineTo();
@@ -55,7 +56,7 @@ private:
         MemoryPtr srcMemPtr;
         std::deque<MemoryPtr> dstMemPtrs;
 
-        ptrdiff_t size;
+        bool canBeInPlace;
     };
 
     ExtensionManager::Ptr ext_mng;
@@ -63,6 +64,7 @@ private:
     Graph subGraphElse;
     std::vector<std::deque<MemoryPtr>> inputMemThen, inputMemElse;
     std::deque<MemoryPtr> outputMemThen, outputMemElse;
+    std::vector<std::string> inputParamsThen, inputParamsElse, outputParamsThen, outputParamsElse;
 
     std::vector<std::shared_ptr<PortMapHelper>>
         beforeThenMappers,

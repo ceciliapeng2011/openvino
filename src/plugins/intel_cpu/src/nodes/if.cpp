@@ -9,6 +9,7 @@
 #include "transformations/utils/utils.hpp"
 #include "common/cpu_memcpy.h"
 #include <shape_inference/shape_inference_internal_dyn.hpp>
+#include "graph_dumper.h"
 
 #include <string>
 #include <vector>
@@ -18,18 +19,24 @@ namespace intel_cpu {
 namespace node {
 
 If::PortMapHelper::PortMapHelper(const MemoryPtr &from, const std::deque<MemoryPtr>& to,
-                                           const dnnl::engine& eng) : srcMemPtr(from), dstMemPtrs(to) {
-    size = 0;
-    if (srcMemPtr->getDesc().isDefined())
-        size = srcMemPtr->getSize();
-}
+                                           const dnnl::engine& eng, const bool inplace) : srcMemPtr(from), dstMemPtrs(to), canBeInPlace(inplace) {}
 
-void If::PortMapHelper::execute(dnnl::stream& strm) {
+void If::PortMapHelper::execute(dnnl::stream& strm, const bool isInputPortMap) {
     // if output shapes are changed,
     // after subgraph inference we should redefine out memory of 'If'
-    redefineTo();
+    if (canBeInPlace && isInputPortMap) {
+        redefineTo();
 
-    cpu_memcpy(dstMemPtrs.front()->getData(), srcMemPtr->getData(), size);
+        // share memory
+        auto memMngr = dstMemPtrs.front()->getMemoryMngr();
+        OPENVINO_ASSERT(memMngr);
+        memMngr->setExtBuff(srcMemPtr->getData(), srcMemPtr->getSize());
+    } else {
+        redefineTo();
+
+        OPENVINO_ASSERT(srcMemPtr->getSize() == dstMemPtrs.front()->getSize());
+        cpu_memcpy(dstMemPtrs.front()->getData(), srcMemPtr->getData(), srcMemPtr->getSize());
+    }
 }
 
 void If::PortMapHelper::redefineTo() {
@@ -40,8 +47,6 @@ void If::PortMapHelper::redefineTo() {
         for (size_t j = 0; j < dstMemPtrs.size(); j++) {
             dstMemPtrs[j]->redefineDesc(memDesc);
         }
-
-        size = srcMemPtr->getSize();
     }
 }
 
@@ -74,8 +79,12 @@ void If::getSupportedDescriptors() {
     subGraphThen.CreateGraph(thenBody, context);
     subGraphElse.CreateGraph(elseBody, context);
 
+    // CPU_DEBUG_CAP_ENABLE(serialize(subGraphThen, "subGraphThen.exec.xml"));
+    // CPU_DEBUG_CAP_ENABLE(serialize(subGraphElse, "subGraphElse.exec.xml"));
+
     const auto &inMapThen = subGraphThen.GetInputNodesMap();
     for (const auto &param : ifOp->get_then_body()->get_parameters()) {
+        inputParamsThen.push_back(param->get_friendly_name());
         auto inNode = inMapThen.find(param->get_friendly_name());
         if (inNode != inMapThen.end()) {
             inputMemThen.push_back(getToMemories(inNode->second.get(), 0));
@@ -89,6 +98,7 @@ void If::getSupportedDescriptors() {
 
     const auto &inMapElse = subGraphElse.GetInputNodesMap();
     for (const auto &param : ifOp->get_else_body()->get_parameters()) {
+        inputParamsElse.push_back(param->get_friendly_name());
         auto inNode = inMapElse.find(param->get_friendly_name());
         if (inNode != inMapElse.end()) {
             inputMemElse.push_back(getToMemories(inNode->second.get(), 0));
@@ -104,6 +114,7 @@ void If::getSupportedDescriptors() {
     for (const auto& out : ifOp->get_then_body()->get_results()) {
         const auto prev = out->input_value(0);
         const std::string inputID = ov::op::util::get_ie_output_name(prev);
+        outputParamsThen.push_back(inputID);
         auto outNode = outMapThen.find(inputID);
         if (outNode != outMapThen.end()) {
             auto outMem = outNode->second->getParentEdgeAt(0)->getMemoryPtr();
@@ -117,6 +128,7 @@ void If::getSupportedDescriptors() {
     for (const auto& out : ifOp->get_else_body()->get_results()) {
         const auto prev = out->input_value(0);
         const std::string inputID = ov::op::util::get_ie_output_name(prev);
+        outputParamsElse.push_back(inputID);
         auto outNode = outMapElse.find(inputID);
         if (outNode != outMapElse.end()) {
             auto outMem = outNode->second->getParentEdgeAt(0)->getMemoryPtr();
@@ -191,11 +203,49 @@ void If::prepareBeforeMappers(const bool isThen, const dnnl::engine& eng) {
     auto &inputPortMap = isThen ? thenInputPortMap : elseInputPortMap;
     auto &inputMems = isThen ? inputMemThen : inputMemElse;
     auto &beforeMappers = isThen ? beforeThenMappers : beforeElseMappers;
+    auto& inputNodesMap = isThen ? subGraphThen.GetInputNodesMap() : subGraphElse.GetInputNodesMap();
+    auto& inputParams = isThen ? inputParamsThen : inputParamsElse;
     for (auto& map_rule : inputPortMap) {
         auto fromMem = getParentEdgesAtPort(map_rule.from)[0]->getMemoryPtr();
         auto &toMems = inputMems[map_rule.to];
 
-        beforeMappers.emplace_back(std::make_shared<PortMapHelper>(fromMem, toMems, eng));
+        // Perform checks that the parent's memory will not be modified if subgraph shares parent's memory.
+        // TODO: to relax... if it is the last exec node of parent's children and no siblings.
+        bool canBeInPlace = true;
+        const auto inputName = inputParams[map_rule.to];
+        NodePtr inputNodePtr = inputNodesMap[inputName];
+        auto& childEdges = inputNodePtr->getChildEdges();
+        for (auto& childEdge : childEdges) {
+            auto ce = childEdge.lock();
+            if (!ce)
+                OPENVINO_THROW("Node ", inputNodePtr->getName(), " contains empty child edge");
+
+            auto& child = ce->getChild();
+
+            if (child->isConstant()) {
+                canBeInPlace = false;
+                break;
+            }
+
+            // the input memory should be referenced by the children, otherwise it should be written to a
+            // specific location
+            if (ce->inPlace(Edge::LOOK_DOWN)) {
+                canBeInPlace = false;
+                break;
+            }
+
+            if (auto result = ce->modifiedInPlace()) {
+                canBeInPlace = false;
+                break;
+            }
+
+            if (child->getType() == Type::Concatenation && child->isInPlace()) {
+                canBeInPlace = false;
+                break;
+            }
+        }
+
+        beforeMappers.emplace_back(std::make_shared<PortMapHelper>(fromMem, toMems, eng, canBeInPlace));
     }
 }
 
@@ -207,7 +257,8 @@ void If::prepareAfterMappers(const bool isThen, const dnnl::engine& eng) {
         auto toMems = getToMemories(this, map_rule.from);
         auto &fromMem = outputMems[map_rule.to];
 
-        afterMappers.emplace_back(std::make_shared<PortMapHelper>(fromMem, toMems, eng));
+        bool canBeInPlace = false;
+        afterMappers.emplace_back(std::make_shared<PortMapHelper>(fromMem, toMems, eng, canBeInPlace));
     }
 }
 
@@ -226,11 +277,11 @@ void If::execute(dnnl::stream strm) {
     auto& subGraph = condition ? subGraphThen : subGraphElse;
 
     for (auto &mapper : beforeMappers)
-        mapper->execute(strm);
+        mapper->execute(strm, true);
     subGraph.ResetInferCount();
     subGraph.Infer();
     for (auto &mapper : afterMappers)
-        mapper->execute(strm);
+        mapper->execute(strm, false);
 }
 
 void If::executeDynamicImpl(dnnl::stream strm) {
