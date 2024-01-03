@@ -16,10 +16,6 @@ namespace node {
 
 If::PortMapHelper::PortMapHelper(const MemoryPtr &from, const std::deque<MemoryPtr>& to,
                                            const dnnl::engine& eng) : srcMemPtr(from), dstMemPtrs(to) {
-    size = 0;
-    if (srcMemPtr->getDesc().isDefined())
-        size = srcMemPtr->getShape().getElementsCount();
-
     // Backup dstMemPtrs
     for (auto& ptr : dstMemPtrs) {
         originalDstMemDescs.push_back(ptr->getDescPtr()->clone());
@@ -30,6 +26,11 @@ void If::PortMapHelper::execute(dnnl::stream& strm) {
     // if output shapes are changed,
     // after subgraph inference we should redefine out memory of 'If'
     redefineTo();
+
+    const auto size = srcMemPtr->getShape().getElementsCount();
+
+    DEBUG_LOG(srcMemPtr->getData(), ", ", srcMemPtr->getDesc().getPrecision(), " -> ",
+            dstMemPtrs.front()->getData(), ", ", dstMemPtrs.front()->getDesc().getPrecision(), ", ", size);
 
     cpu_convert(srcMemPtr->getData(),
                 dstMemPtrs.front()->getData(),
@@ -47,8 +48,6 @@ void If::PortMapHelper::redefineTo() {
             // Only the shape is updated, the memory type remains unchanged
             dstMemPtrs[j]->redefineDesc(originalDstMemDescs[j]->cloneWithNewDims(newShape));
         }
-
-        size = srcMemPtr->getShape().getElementsCount();
     }
 }
 
