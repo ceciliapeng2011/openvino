@@ -46,9 +46,9 @@ public:
         const std::vector<InputShape> input_shapes = {
             // param0, to simulate cross-attention kv-cache of Whisper model. State should
             // keep the same value of the first iteration no matter how param0 changes.
-            {{1, -1}, {{1, 3}, {1, 1}, {1, 1}}}, // (B, L)
+            {{1, -1}, {{1, 3}, {1, 3}, {1, 1}, {1, 1}}}, // (B, L)
             // param1, to simulate input_ids for first-token, second-token, etc.
-            {{1, -1}, {{1, 3}, {1, 1}, {1, 1}}}, // (B, L)
+            {{1, -1}, {{1, 3}, {1, 3}, {1, 1}, {1, 1}}}, // (B, L)
          };
         init_input_shapes(input_shapes);
 
@@ -94,6 +94,18 @@ public:
         return outputs;
     }
 
+    std::vector<ov::Tensor> get_plugin_outputs() override {
+        for (const auto& input : inputs) {
+            inferRequest.set_tensor(input.first, input.second);
+        }
+        inferRequest.infer();
+        auto outputs = std::vector<ov::Tensor>{};
+        for (const auto& output : function->outputs()) {
+            outputs.push_back(inferRequest.get_tensor(output));
+        }
+        return outputs;
+    }
+
     void reset() {
         for (auto&& state : inferRequest.query_state()) {
             state.reset();
@@ -106,6 +118,9 @@ public:
 
     void prepare() {
         compile_model();
+
+        inferRequest = compiledModel.create_infer_request();
+        ASSERT_TRUE(inferRequest);
 
         // ref
         functionRefs = function->clone();
@@ -125,11 +140,12 @@ public:
         prepare();
 
         // iterating with state reset
-        for (auto iters = 0; iters < 2; iters++) {
+        for (auto iters = 0; iters < 3; iters++) {
             std::cout << "========= iters" << iters << std::endl;
             for (const auto& targetStaticShapeVec : targetStaticShapes) {
                 std::cout << "========= targetStaticShapeVec" << targetStaticShapeVec.front() << std::endl;
                 generate_inputs(targetStaticShapeVec);
+
                 validate();
             }
 
