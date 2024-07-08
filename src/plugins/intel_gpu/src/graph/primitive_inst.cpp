@@ -593,7 +593,7 @@ event::ptr primitive_inst::realloc_if_needed() {
             user->update_shape();
             user->update_shape_done_by_other = true;
 
-            auto fc_impl_params = *user->_impl_params;
+            auto& fc_impl_params = *user->_impl_params;
             auto fc_input_layout = user->get_node().type()->get_fake_aligned_params(fc_impl_params).input_layouts[0];
             if (fc_input_layout.bytes_count() > updated_layout.bytes_count()) {
                 GPU_DEBUG_TRACE_DETAIL << id() << ": increase output layout allocation size from " << actual_layout.to_short_string() << " -> "
@@ -2049,7 +2049,7 @@ memory::ptr primitive_inst::allocate_output(engine& _engine,
 
 std::vector<memory::ptr> primitive_inst::allocate_outputs(kernel_impl_params* updated_params, bool reset_mem, bool runtime_alloc) {
     std::vector<memory::ptr> outputs;
-    auto impl_params = updated_params != nullptr ? *updated_params : *_impl_params;
+    auto& impl_params = updated_params != nullptr ? *updated_params : *_impl_params;
     auto& out_layouts = impl_params.output_layouts;
     for (size_t i = 0; i < get_node().get_outputs_count() ; ++i) {
         if (out_layouts[i].is_dynamic() && !out_layouts[i].has_upper_bound()) {
