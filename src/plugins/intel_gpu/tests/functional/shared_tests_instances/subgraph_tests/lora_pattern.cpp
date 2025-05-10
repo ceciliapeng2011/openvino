@@ -16,7 +16,7 @@ const std::vector<size_t> lora_rank = { 16, 25, 64, 128 };
 INSTANTIATE_TEST_SUITE_P(smoke,
                          LoraPatternMatmul,
                          ::testing::Combine(::testing::Values(ov::test::utils::DEVICE_GPU),
-                                            ::testing::Values(ov::element::f32),
+                                            ::testing::ValuesIn({ov::element::f32, ov::element::f16}),
                                             ::testing::ValuesIn(M),
                                             ::testing::ValuesIn(N),
                                             ::testing::ValuesIn(K),
