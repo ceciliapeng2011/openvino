@@ -10,8 +10,295 @@
 #include "lora/lora_kernel_selector.h"
 #include "lora/lora_kernel_base.h"
 
+#include <oneapi/dnnl/dnnl.hpp>
+#include <oneapi/dnnl/dnnl_ocl.hpp>
+
 namespace cldnn {
 namespace ocl {
+dnnl::memory::data_type convert_data_type(cldnn::data_types dt);
+dnnl::memory convert2dnnl(const memory::ptr& ptr, const std::vector<int64_t>& dim, dnnl::memory::format_tag tag, int offset = 0) ;
+
+dnnl::memory::data_type convert_data_type(cldnn::data_types dt) {
+    switch (dt) {
+    case cldnn::data_types::f32:
+        return dnnl::memory::data_type::f32;
+    case cldnn::data_types::f16:
+        return dnnl::memory::data_type::f16;
+    case cldnn::data_types::i8:
+        return dnnl::memory::data_type::s8;
+    case cldnn::data_types::u8:
+        return dnnl::memory::data_type::u8;
+    case cldnn::data_types::i32:
+        return dnnl::memory::data_type::s32;
+    case cldnn::data_types::i4:
+        return dnnl::memory::data_type::s4;
+    case cldnn::data_types::u4:
+        return dnnl::memory::data_type::u4;
+    default:
+        throw std::invalid_argument("[clDNN] Unsupported conversion from cldnn to onednn type");
+    }
+}
+
+struct onednn_matmul {
+    dnnl::matmul m_prim;
+    dnnl::memory::desc m_wei_md;
+    dnnl::memory::data_type m_w_type;
+    dnnl::memory::data_type m_a_type;  // activation dtype
+    dnnl::memory::dim m_K;
+    dnnl::memory::dim m_N;
+    dnnl::memory::dim m_M;
+    dnnl::memory::dim m_K_groups;
+
+    dnnl::primitive_attr attr;
+    dnnl::post_ops postops;
+
+    onednn_matmul(dnnl::memory::data_type act_dtype, dnnl::memory::data_type weight_dtype, int batch_size, int ic, int oc) {
+        m_a_type = act_dtype;
+        m_w_type = weight_dtype;
+        m_K_groups = 0;
+        m_K = ic;
+        m_N = oc;
+        m_M = DNNL_RUNTIME_DIM_VAL;
+        if (batch_size > 0) {
+            // jit-gemm kernel only support static batch size
+            m_M = batch_size;
+        }
+    }
+
+    onednn_matmul& fpmath_f16() {
+        attr.set_fpmath_mode(dnnl::fpmath_mode::f16, true);
+        return *this;
+    }
+    onednn_matmul& post_op_silu() {
+        float alpha = 1.0f;
+        float beta = 0.0f;
+        postops.append_eltwise(dnnl::algorithm::eltwise_swish, alpha, beta);
+        return *this;
+    }
+    onednn_matmul& post_op_bin_mul(bool per_oc = true, bool broad_cast = false) {
+        dnnl::memory::dim batch_size = m_M;
+        if (batch_size == DNNL_RUNTIME_DIM_VAL)
+            batch_size = 1024 * 1024;  // big enough fake static batch
+
+        dnnl::memory::desc bin_mul_md = dnnl::memory::desc(dnnl::memory::dims({broad_cast ? 1 : batch_size, per_oc ? m_N : 1}), m_a_type, dnnl::memory::format_tag::ab);
+        postops.append_binary(dnnl::algorithm::binary_mul, bin_mul_md);
+        return *this;
+    }
+    onednn_matmul& post_op_bin_add(bool per_oc = true) {
+        dnnl::memory::dim batch_size = m_M;
+        if (batch_size == DNNL_RUNTIME_DIM_VAL)
+            batch_size = 1024*1024; // big enough fake static batch
+
+        dnnl::memory::desc bin_add_md = dnnl::memory::desc(dnnl::memory::dims({batch_size, per_oc ? m_N : 1}), m_a_type, dnnl::memory::format_tag::ab);
+        postops.append_binary(dnnl::algorithm::binary_add, bin_add_md);
+        return *this;
+    }
+
+    onednn_matmul& post_op_sum(float scale = 1.f, int32_t zero_point = 0) {
+        postops.append_sum(scale, zero_point, dnnl::memory::data_type::undef);
+        return *this;
+    }
+
+    void create(dnnl::engine eng) {
+        if (postops.len() > 0) {
+            attr.set_post_ops(postops);
+        }
+
+        dnnl::memory::desc src_md = dnnl::memory::desc(dnnl::memory::dims({m_M, m_K}), m_a_type, dnnl::memory::format_tag::ab);
+        dnnl::memory::desc dst_md = dnnl::memory::desc(dnnl::memory::dims({m_M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
+        // memory::desc wei_md = memory::desc(memory::dims({m_K, m_N}), m_w_type, memory::format_tag::any);
+
+        // use fixed weight-layout to prevent shape-dependent weight-layout changes
+        dnnl::memory::desc wei_md = dnnl::memory::desc(dnnl::memory::dims({m_K, m_N}), m_w_type, dnnl::memory::format_tag::ab);
+        // dnnl::memory::desc wei_md = dnnl::memory::desc(dnnl::memory::dims({m_K, m_N}), m_w_type, dnnl::memory::format_tag::ab);
+
+        // Create primitive descriptor.
+        auto matmul_pd = dnnl::matmul::primitive_desc(eng, src_md, wei_md, dst_md, attr);
+
+        // Pre-packed weights stored as int8_t
+        m_wei_md = matmul_pd.weights_desc();
+
+        // Create the primitive.
+        m_prim = dnnl::matmul(matmul_pd);
+    }
+
+    // this creator is for predefined matmul primitive types
+    enum class type {
+        none,
+        with_bin_mul,
+        with_bin_add,
+        with_bin_mul_per_row,
+        with_bin_mul_per_row_sum,
+        with_silu,
+        with_silu_bin_mul,
+    };
+    int bin_post_id = -1;
+    bool bin_per_row = false;
+    onednn_matmul(dnnl::engine eng,
+                  dnnl::memory::data_type act_dtype,
+                  dnnl::memory::data_type weight_dtype,
+                  int batch,
+                  int ic,
+                  int oc,
+                //   int ic_group_size,
+                  type t)
+        : onednn_matmul(act_dtype, weight_dtype, batch, ic, oc) {
+        if (t == type::with_bin_mul) {
+            bin_post_id = 0;
+            post_op_bin_mul(true, true);
+        }
+        if (t == type::with_bin_add) {
+            bin_post_id = 0;
+            post_op_bin_add(true);
+        }
+        if (t == type::with_bin_mul_per_row) {
+            bin_post_id = 0;
+            bin_per_row = true;
+            post_op_bin_mul(false);
+        }
+        if (t == type::with_bin_mul_per_row_sum) {
+            bin_post_id = 0;
+            bin_per_row = true;
+            post_op_bin_mul(false);
+            post_op_sum();
+        }
+        if (t == type::with_silu)
+            post_op_silu();
+        if (t == type::with_silu_bin_mul) {
+            bin_post_id = 1;
+            post_op_silu();
+            post_op_bin_mul(true);
+        }
+
+        create(eng);
+    }
+};
+
+// all jit-based/performance-aware function should be a functor/callable because:
+//   - it needs to hold reference to kernel (to save build time & resources)
+//   - it needs to do other compile time preparation work and hold the relevant
+//     runtime-data-struct (to make runtime faster)
+// to optimze compile-time-workload itself, the functor instance itself should be
+// cached with compile-time parameter as the key.
+//
+// because it's a functor, which supposed to have no states, so cache-factory should
+// always return shared_ptr to constant object, so it won't behave differently when being
+// called by different caller, and this also ensure it's multi-threading safe since it
+// won't modify it's content.
+//
+template <typename... TTypes>
+class tuple_hasher {
+private:
+    typedef std::tuple<TTypes...> Tuple;
+    template <int N>
+    size_t hash(Tuple& value) const {
+        return 0;
+    }
+    template <int N, typename THead, typename... TTail>
+    size_t hash(Tuple& value) const {
+        constexpr int Index = N - sizeof...(TTail) - 1;
+        return std::hash<THead>()(std::get<Index>(value)) ^ hash<N, TTail...>(value);
+    }
+
+public:
+    size_t operator()(Tuple value) const {
+        auto hv = hash<sizeof...(TTypes), TTypes...>(value);
+        return hv;
+    }
+};
+
+// create const object with internal cache with constructor-args as the key
+// this helps reduces construction time overhead, and perfectly suitable
+// for caching functor/callable.
+template <class T, typename... CArgs>
+std::shared_ptr<const T> make_cacheable(dnnl::engine eng, CArgs... cargs) {
+    std::shared_ptr<const T> sptr;
+    auto key = std::make_tuple(cargs...);
+    static std::unordered_map<decltype(key), std::weak_ptr<const T>, tuple_hasher<CArgs...>> cache;
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> guard(mutex);
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        auto& wptr = it->second;
+        sptr = wptr.lock();
+        if (!sptr) {
+            sptr = std::make_shared<T>(eng, cargs...);
+            // ECOUT("make_cacheable re-constructed: ", typeid(T).name(), "(", cargs..., ")");
+            wptr = sptr;
+        }
+    } else {
+        sptr = std::make_shared<T>(eng, cargs...);
+        // ECOUT("make_cacheable constructed: ", typeid(T).name(), "(", cargs..., ")");
+        cache.emplace(std::make_pair(key, std::weak_ptr<const T>(sptr)));
+    }
+    return sptr;
+}
+
+struct onednn_linear {
+    std::shared_ptr<const onednn_matmul> mm;
+    dnnl::memory weight;
+    // dnnl::memory scale;
+    // dnnl::memory zp;
+    dnnl::matmul m_prim;
+    dnnl::memory::dim m_K;
+    dnnl::memory::dim m_N;
+    dnnl::memory::dim m_batch;
+    dnnl::memory::data_type m_a_type;
+    int bin_post_id;
+
+    static onednn_linear create(dnnl::engine eng,
+                                dnnl::memory::data_type act_dtype,
+                                dnnl::memory::data_type weight_dtype,
+                                int batch,
+                                int ic,
+                                int oc,
+                                onednn_matmul::type t) {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("onednn_linear::create()"));
+        auto mm = make_cacheable<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, t);
+        onednn_linear linear;
+        linear.mm = mm;
+        linear.bin_post_id = mm->bin_post_id;
+        linear.m_prim = mm->m_prim;
+        linear.m_K = mm->m_K;
+        linear.m_N = mm->m_N;
+        linear.m_batch = batch;
+        linear.m_a_type = mm->m_a_type;
+
+        return linear;
+    }
+
+    void forward(dnnl::stream& stream, int m, dnnl::memory src_mem, dnnl::memory weight_mem, dnnl::memory dst_mem, dnnl::memory bin_mem) {
+        OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("onednn_linear::forward()"));
+        dnnl::memory::dim M = m;
+
+        OPENVINO_ASSERT(m_batch == 0 || m_batch == M, "m_batch=", m_batch, " M=", M);
+
+        dnnl::memory::desc rt_src_md = dnnl::memory::desc(dnnl::memory::dims({M, m_K}), m_a_type, dnnl::memory::format_tag::ab);
+        dnnl::memory::desc rt_dst_md = dnnl::memory::desc(dnnl::memory::dims({M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
+        dnnl::memory::desc rt_bin_md;
+        if (mm->bin_per_row) {
+            rt_bin_md = dnnl::memory::desc(dnnl::memory::dims({M, 1}), m_a_type, dnnl::memory::format_tag::ab);
+        } else {
+            rt_bin_md = dnnl::memory::desc(dnnl::memory::dims({M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
+        }
+
+        std::unordered_map<int, dnnl::memory> args;
+        args.insert({DNNL_ARG_SRC, src_mem});
+        args.insert({DNNL_ARG_WEIGHTS, weight_mem});
+        // args.insert({DNNL_ARG_BIAS, bias_mem});
+        args.insert({DNNL_ARG_DST, dst_mem});
+
+        if (bin_mem) {
+            args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(bin_post_id) | DNNL_ARG_SRC_1, bin_mem});
+        }
+        m_prim.execute(stream, args);
+    }
+};
+
+dnnl::memory convert2dnnl(const memory::ptr& ptr, const std::vector<int64_t>& dim, dnnl::memory::format_tag tag, int offset) {
+    OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("convert2dnnl"));
+    return ptr->get_onednn_memory(dnnl::memory::desc(dnnl::memory::dims(dim), convert_data_type(ptr->get_layout().data_type), tag), offset);
+}
 
 struct lora_impl : multi_stage_primitive<lora> {
     using parent = multi_stage_primitive<lora>;
@@ -89,7 +376,118 @@ struct lora_impl : multi_stage_primitive<lora> {
         return true;
     }
 
+// #ifdef ENABLE_ONEDNN_FOR_GPU
+    bool is_onednn_lora_prefered(const lora_inst& instance) {
+        int enable = 0;
+        auto p = std::getenv("ONEDNN_LORA");
+        if (p) {
+            enable = std::atoi(p);
+        }
+        return enable;
+        const auto& main_input_layout = instance.get_input_layout(0);
+        size_t batch = main_input_layout.get_shape().front();
+        if (batch <= 1) {
+            return false;
+        }
+
+        return true;
+    }
+
+    struct onednn_kernel {
+        onednn_linear gemm_a;
+        onednn_linear gemm_b;
+    };
+    struct PairHash {
+        template <class T1, class T2>
+        size_t operator()(const std::pair<T1, T2>& p) const {
+            // Combine hash values of the pair elements
+            return std::hash<T1>()(p.first) ^ std::hash<T2>()(p.second);
+        }
+    };
+    std::unordered_map<std::pair<int, int>, onednn_kernel, PairHash> onednn_kernels;
+
+    onednn_kernel& get_kernel(dnnl::stream& dnnl_stream, lora_inst& instance, int n_token, int lora_rank, int in_state_size, int out_state_size, int expert_no=0) {
+        auto key = std::make_pair(n_token, expert_no);
+        if (onednn_kernels.count(key))
+            return onednn_kernels[key];
+
+        auto activation_dt = convert_data_type(instance.input_memory_ptr(1)->get_layout().data_type);
+        auto weights_dt = convert_data_type(instance.input_memory_ptr(2)->get_layout().data_type);
+
+        onednn_kernel kernel;
+        // down
+        kernel.gemm_a = onednn_linear::create(dnnl_stream.get_engine(),
+                                            activation_dt,
+                                            weights_dt,
+                                            n_token,
+                                            in_state_size,
+                                            lora_rank,
+                                            onednn_matmul::type::with_bin_mul);
+        // up
+        kernel.gemm_b = onednn_linear::create(dnnl_stream.get_engine(),
+                                          activation_dt,
+                                          weights_dt,
+                                          n_token,
+                                          lora_rank,
+                                          out_state_size,
+                                          onednn_matmul::type::with_bin_add);                                            
+        onednn_kernels[key] = kernel;
+        return onednn_kernels[key];
+    }
+
+    event::ptr execute_stage(const std::vector<event::ptr>& events, lora_inst& instance) {
+        std::cout << "============================= execute onednn_lora ==============================" << std::endl;
+        auto& cur_net = instance.get_network();
+        auto& stream = cur_net.get_stream();
+        auto& dnnl_stream = stream.get_onednn_stream();
+        cldnn::event::ptr result_event;
+
+        const auto& lora_input_layout = instance.get_input_layout(1); 
+        const auto& lora_input_shape = lora_input_layout.get_shape();   // (1, M, in_state_size)
+        size_t n_token = lora_input_shape[1];
+
+        const auto& lora_a_mem = instance.input_memory_ptr(2);
+        const auto& lora_alpha_mem = instance.input_memory_ptr(3);      // (1, lora_rank)
+        const auto& lora_b_mem = instance.input_memory_ptr(4);
+
+        const auto& lora_a_shape = lora_a_mem->get_layout().get_shape();  // (lora_rank, in_state_size)
+        const auto& lora_b_shape = lora_b_mem->get_layout().get_shape();  // (out_state_size, lora_rank)
+        auto lora_rank = lora_a_shape[0];
+        auto in_state_size = lora_a_shape[1];
+        auto out_state_size = lora_b_shape[0];
+
+        onednn_kernel& kernel = get_kernel(dnnl_stream, instance, n_token, lora_rank, in_state_size, out_state_size);
+
+        const auto main_input = instance.input_memory_ptr(0);
+        const auto lora_input = instance.input_memory_ptr(1);
+        const auto& lora_output = instance.output_memory_ptr();
+        const auto scracth_mem = instance.get_intermediates_memories().front();
+
+        // src, weight, dst, bin
+        kernel.gemm_a.forward(dnnl_stream, n_token,
+                            convert2dnnl(lora_input, {static_cast<int>(n_token), static_cast<int>(in_state_size)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(lora_a_mem, {static_cast<int>(in_state_size), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(scracth_mem, {static_cast<int>(n_token), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(lora_alpha_mem, {static_cast<int>(1), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab));
+
+        kernel.gemm_b.forward(dnnl_stream, n_token,
+                            convert2dnnl(scracth_mem, {static_cast<int>(n_token), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(lora_b_mem, {static_cast<int>(lora_rank), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(lora_output, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab),
+                            convert2dnnl(main_input, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab));
+        if (instance.needs_completion_event())
+            result_event = stream.enqueue_marker({});
+
+        return result_event;
+    }
+// #endif
+
     event::ptr execute_impl(const std::vector<event::ptr>& events, lora_inst& instance) override {
+#ifdef ENABLE_ONEDNN_FOR_GPU
+        if (is_onednn_lora_prefered(instance)) {
+            return execute_stage(events, instance);
+        }
+#endif
         if (is_optimized_kernel_supported(instance)) {
             return execute_stage(events, instance, optimized_kernel);
         } else {
