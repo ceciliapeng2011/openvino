@@ -132,7 +132,7 @@ TEST_P(lora_act_eltw, basic) {
 
         activation("act", input_info("lora"), activation_func::swish),
         data("eltw_data", get_mem(get_per_last_dim_layout(p), 1, 9)),
-        eltwise("eltw", { input_info("act"), input_info("eltw_data") }, eltwise_mode::sum, p.input_type),
+        eltwise("eltw", { input_info("act"), input_info("eltw_data") }, eltwise_mode::prod, p.input_type),
         reorder("reorder_bfyx", input_info("eltw"), p.planar_format, data_types::f32)
     );
 
@@ -144,4 +144,36 @@ INSTANTIATE_TEST_SUITE_P(fusings_gpu, lora_act_eltw, ::testing::ValuesIn(std::ve
     lora_test_params{ CASE_LORA_F32_DEFAULT_OPT, 6, 11 },
     lora_test_params{ CASE_LORA_F32_DEFAULT_REF, 6, 11 },
     lora_test_params{ CASE_LORA_F32_EMPTY, 6, 10 }
+}));
+
+
+class lora_eltw : public LoraFusingsTest {};
+TEST_P(lora_eltw, basic) {
+    auto p = GetParam();
+    create_topologies(
+        input_layout("input", get_lora_input_layout(p, true)),
+        data("weights", get_mem(get_fc_weights_layout(p))),
+        fully_connected("fc_prim", input_info("input"), "weights", "", get_fc_input_rank(p), get_fc_weights_rank(p)),
+
+        input_layout("state_a", get_lora_state_layout(p, 0, true)),
+        input_layout("state_alpha", get_lora_state_layout(p, 1, true)),
+        input_layout("state_b", get_lora_state_layout(p, 2, true)),
+        read_value{"rv_a", { input_info("state_a") }, "var_a", { get_lora_state_layout(p, 0) }},
+        read_value{"rv_alpha", { input_info("state_alpha") }, "var_alpha", { get_lora_state_layout(p, 1) }},
+        read_value{"rv_b", { input_info("state_b") }, "var_b", { get_lora_state_layout(p, 2) }},
+        lora("lora", { input_info("fc_prim"), input_info("input"), input_info("rv_a"), input_info("rv_alpha"), input_info("rv_b") }, true),
+
+        data("eltw_data", get_mem(get_per_last_dim_layout(p), 1, 9)),
+        eltwise("eltw", { input_info("lora"), input_info("eltw_data") }, eltwise_mode::sum, p.input_type),
+        reorder("reorder_bfyx", input_info("eltw"), p.planar_format, data_types::f32)
+    );
+
+    tolerance = 1e-5f;
+    execute(p);
+}
+
+INSTANTIATE_TEST_SUITE_P(fusings_gpu, lora_eltw, ::testing::ValuesIn(std::vector<lora_test_params>{
+    lora_test_params{ CASE_LORA_F32_DEFAULT_OPT, 6, 10 },
+    lora_test_params{ CASE_LORA_F32_DEFAULT_REF, 6, 10 },
+    lora_test_params{ CASE_LORA_F32_EMPTY, 6, 9 }
 }));
