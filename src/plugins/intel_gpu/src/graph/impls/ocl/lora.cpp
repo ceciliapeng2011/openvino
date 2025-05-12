@@ -377,22 +377,6 @@ struct lora_impl : multi_stage_primitive<lora> {
     }
 
 // #ifdef ENABLE_ONEDNN_FOR_GPU
-    bool is_onednn_lora_prefered(const lora_inst& instance) {
-        int enable = 0;
-        auto p = std::getenv("ONEDNN_LORA");
-        if (p) {
-            enable = std::atoi(p);
-        }
-        return enable;
-        const auto& main_input_layout = instance.get_input_layout(0);
-        size_t batch = main_input_layout.get_shape().front();
-        if (batch <= 1) {
-            return false;
-        }
-
-        return true;
-    }
-
     struct onednn_kernel {
         onednn_linear gemm_a;
         onednn_linear gemm_b;
@@ -483,11 +467,11 @@ struct lora_impl : multi_stage_primitive<lora> {
 // #endif
 
     event::ptr execute_impl(const std::vector<event::ptr>& events, lora_inst& instance) override {
-#ifdef ENABLE_ONEDNN_FOR_GPU
-        if (is_onednn_lora_prefered(instance)) {
+// #ifdef ENABLE_ONEDNN_FOR_GPU
+        if (instance.is_onednn_lora_prefered()) {
             return execute_stage(events, instance);
         }
-#endif
+// #endif
         if (is_optimized_kernel_supported(instance)) {
             return execute_stage(events, instance, optimized_kernel);
         } else {

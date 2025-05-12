@@ -34,17 +34,7 @@ void lora_inst::on_execute() {
 }
 
 void lora_inst::update_output_memory() {
-    size_t fused_dep_size = 0;
-    for (const auto& fused_desc : _impl_params->fused_desc) {
-        fused_dep_size += fused_desc.deps.size();
-    }
-
-    bool is_empty_lora = true;
-    for (size_t i = 2; i < _impl_params->input_layouts.size() - fused_dep_size; ++i) {
-        is_empty_lora &= _impl_params->get_input_layout(i).count() == 0;
-    }
-
-    if (!is_empty_lora)
+    if (!is_empty_lora())
        return;
 
     if (static_cast<bool>(_outputs[0]) && _network.get_engine().is_the_same_buffer(output_memory(), input_memory()))
@@ -65,6 +55,37 @@ void lora_inst::update_output_memory() {
 
     _outputs[0] = input_memory_ptr();
     _mem_allocated = false;
+}
+
+// #ifdef ENABLE_ONEDNN_FOR_GPU
+bool lora_inst::is_onednn_lora_prefered() {
+    int enable = 0;
+    auto p = std::getenv("ONEDNN_LORA");
+    if (p) {
+        enable = std::atoi(p);
+    }
+    return enable & !is_empty_lora();
+    const auto& main_input_layout = get_input_layout(0);
+    size_t batch = main_input_layout.get_shape().front();
+    if (batch <= 1) {
+        return false;
+    }
+
+    return true;
+}
+// #endif
+
+bool lora_inst::is_empty_lora() {
+    size_t fused_dep_size = 0;
+    for (const auto& fused_desc : _impl_params->fused_desc) {
+        fused_dep_size += fused_desc.deps.size();
+    }
+
+    bool is_empty_lora = true;
+    for (size_t i = 2; i < _impl_params->input_layouts.size() - fused_dep_size; ++i) {
+        is_empty_lora &= _impl_params->get_input_layout(i).count() == 0;
+    }
+    return is_empty_lora;
 }
 
 lora_inst::typed_primitive_inst(network& network, const lora_node& node) : parent(network, node) {}

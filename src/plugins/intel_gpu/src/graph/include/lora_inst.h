@@ -40,6 +40,10 @@ public:
 
     void update_output_memory() override;
 
+    bool is_onednn_lora_prefered();
+
+    bool is_empty_lora();
+
 private:
     void on_execute() override;
 };
