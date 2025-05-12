@@ -12,6 +12,7 @@
 
 #include <oneapi/dnnl/dnnl.hpp>
 #include <oneapi/dnnl/dnnl_ocl.hpp>
+#include "intel_gpu/graph/fused_primitive_desc.hpp"
 
 namespace cldnn {
 namespace ocl {
@@ -35,7 +36,7 @@ dnnl::memory::data_type convert_data_type(cldnn::data_types dt) {
     case cldnn::data_types::u4:
         return dnnl::memory::data_type::u4;
     default:
-        throw std::invalid_argument("[clDNN] Unsupported conversion from cldnn to onednn type");
+        throw std::invalid_argument("[clDNN] Unsupported conversion from cldnn to onednn post_ops_type");
     }
 }
 
@@ -123,49 +124,39 @@ struct onednn_matmul {
     }
 
     // this creator is for predefined matmul primitive types
-    enum class type {
+    enum class post_ops_type {
         none,
         with_bin_mul,
         with_bin_add,
-        with_bin_mul_per_row,
-        with_bin_mul_per_row_sum,
-        with_silu,
-        with_silu_bin_mul,
+        with_bin_add_add,
+        with_bin_add_mul,
+        with_bin_add_silu_mul,
     };
-    int bin_post_id = -1;
-    bool bin_per_row = false;
+
     onednn_matmul(dnnl::engine eng,
                   dnnl::memory::data_type act_dtype,
                   dnnl::memory::data_type weight_dtype,
                   int batch,
                   int ic,
                   int oc,
-                //   int ic_group_size,
-                  type t)
+                  post_ops_type t)
         : onednn_matmul(act_dtype, weight_dtype, batch, ic, oc) {
-        if (t == type::with_bin_mul) {
-            bin_post_id = 0;
+        if (t == post_ops_type::with_bin_mul) {
             post_op_bin_mul(true, true);
         }
-        if (t == type::with_bin_add) {
-            bin_post_id = 0;
+        if (t == post_ops_type::with_bin_add) {
             post_op_bin_add(true);
         }
-        if (t == type::with_bin_mul_per_row) {
-            bin_post_id = 0;
-            bin_per_row = true;
-            post_op_bin_mul(false);
+        if (t == post_ops_type::with_bin_add_add) {
+            post_op_bin_add(true);
+            post_op_bin_add(true);
         }
-        if (t == type::with_bin_mul_per_row_sum) {
-            bin_post_id = 0;
-            bin_per_row = true;
-            post_op_bin_mul(false);
-            post_op_sum();
+        if (t == post_ops_type::with_bin_add_mul) {
+            post_op_bin_mul(true, true);
+            post_op_bin_mul(true, true);
         }
-        if (t == type::with_silu)
-            post_op_silu();
-        if (t == type::with_silu_bin_mul) {
-            bin_post_id = 1;
+        if (t == post_ops_type::with_bin_add_silu_mul) {
+            post_op_bin_add(true);
             post_op_silu();
             post_op_bin_mul(true);
         }
@@ -244,7 +235,7 @@ struct onednn_linear {
     dnnl::memory::dim m_N;
     dnnl::memory::dim m_batch;
     dnnl::memory::data_type m_a_type;
-    int bin_post_id;
+    std::vector<std::pair<int, onednn_matmul::post_ops_type>> bin_post_ops;
 
     static onednn_linear create(dnnl::engine eng,
                                 dnnl::memory::data_type act_dtype,
@@ -252,12 +243,11 @@ struct onednn_linear {
                                 int batch,
                                 int ic,
                                 int oc,
-                                onednn_matmul::type t) {
+                                onednn_matmul::post_ops_type post_ops) {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("onednn_linear::create()"));
-        auto mm = make_cacheable<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, t);
+        auto mm = make_cacheable<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, post_ops);
         onednn_linear linear;
         linear.mm = mm;
-        linear.bin_post_id = mm->bin_post_id;
         linear.m_prim = mm->m_prim;
         linear.m_K = mm->m_K;
         linear.m_N = mm->m_N;
@@ -267,7 +257,7 @@ struct onednn_linear {
         return linear;
     }
 
-    void forward(dnnl::stream& stream, int m, dnnl::memory src_mem, dnnl::memory weight_mem, dnnl::memory dst_mem, dnnl::memory bin_mem) {
+    void forward(dnnl::stream& stream, int m, dnnl::memory src_mem, dnnl::memory weight_mem, dnnl::memory dst_mem, std::vector<dnnl::memory>& bin_mems) {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("onednn_linear::forward()"));
         dnnl::memory::dim M = m;
 
@@ -276,11 +266,7 @@ struct onednn_linear {
         dnnl::memory::desc rt_src_md = dnnl::memory::desc(dnnl::memory::dims({M, m_K}), m_a_type, dnnl::memory::format_tag::ab);
         dnnl::memory::desc rt_dst_md = dnnl::memory::desc(dnnl::memory::dims({M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
         dnnl::memory::desc rt_bin_md;
-        if (mm->bin_per_row) {
-            rt_bin_md = dnnl::memory::desc(dnnl::memory::dims({M, 1}), m_a_type, dnnl::memory::format_tag::ab);
-        } else {
-            rt_bin_md = dnnl::memory::desc(dnnl::memory::dims({M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
-        }
+        rt_bin_md = dnnl::memory::desc(dnnl::memory::dims({M, m_N}), m_a_type, dnnl::memory::format_tag::ab);
 
         std::unordered_map<int, dnnl::memory> args;
         args.insert({DNNL_ARG_SRC, src_mem});
@@ -288,8 +274,13 @@ struct onednn_linear {
         // args.insert({DNNL_ARG_BIAS, bias_mem});
         args.insert({DNNL_ARG_DST, dst_mem});
 
-        if (bin_mem) {
-            args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(bin_post_id) | DNNL_ARG_SRC_1, bin_mem});
+        auto bin_mem = bin_mems.cbegin();
+        auto postops_len = mm->postops.len();
+        for (int bin_post_id = 0; bin_post_id < postops_len; bin_post_id++) {
+            if (mm->postops.kind(bin_post_id) == dnnl::primitive::kind::binary) {
+                args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(bin_post_id) | DNNL_ARG_SRC_1, *bin_mem});
+                bin_mem++;
+            }
         }
         m_prim.execute(stream, args);
     }
@@ -398,23 +389,54 @@ struct lora_impl : multi_stage_primitive<lora> {
         auto activation_dt = convert_data_type(instance.input_memory_ptr(1)->get_layout().data_type);
         auto weights_dt = convert_data_type(instance.input_memory_ptr(2)->get_layout().data_type);
 
+        // as a temprory approach to alliviate performance loss, only support limited situations observed in HP lora cases.
+        auto get_fused_post_ops = [&](lora_inst& instance) {
+            const auto& node = instance.get_node();
+            const auto& fused_ops = node.get_fused_primitives();
+            const auto fusedops_len = fused_ops.size();
+
+            if (fusedops_len == 0) return onednn_matmul::post_ops_type::with_bin_add;
+            if (fusedops_len == 1) {
+                const auto& fused_op = fused_ops.front();
+                if (fused_op.is_type<eltwise>() && fused_op.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::sum)
+                    return onednn_matmul::post_ops_type::with_bin_add_add;
+                if (fused_op.is_type<eltwise>() && fused_op.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::prod)
+                    return onednn_matmul::post_ops_type::with_bin_add_mul;
+            }
+            if (fusedops_len == 2) {
+                const auto& fused_op0 = fused_ops.front();
+                const auto& fused_op1 = fused_ops.back();
+                if ((fused_op0.is_type<activation>() && fused_op0.typed_desc<activation>()->activation_function == cldnn::activation_func::swish) &&
+                    (fused_op1.is_type<eltwise>() && fused_op1.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::prod))
+                    return onednn_matmul::post_ops_type::with_bin_add_silu_mul;
+            }
+
+            OPENVINO_ASSERT(0, "[GPU] Unsupported fused post ops pattern... should not be here.");
+        };
+
         onednn_kernel kernel;
         // down
-        kernel.gemm_a = onednn_linear::create(dnnl_stream.get_engine(),
+        {
+            kernel.gemm_a = onednn_linear::create(dnnl_stream.get_engine(),
+                                                activation_dt,
+                                                weights_dt,
+                                                n_token,
+                                                in_state_size,
+                                                lora_rank,
+                                                onednn_matmul::post_ops_type::with_bin_mul);
+        }
+
+        // up
+        {
+            auto fused_ops = get_fused_post_ops(instance);
+            kernel.gemm_b = onednn_linear::create(dnnl_stream.get_engine(),
                                             activation_dt,
                                             weights_dt,
                                             n_token,
-                                            in_state_size,
                                             lora_rank,
-                                            onednn_matmul::type::with_bin_mul);
-        // up
-        kernel.gemm_b = onednn_linear::create(dnnl_stream.get_engine(),
-                                          activation_dt,
-                                          weights_dt,
-                                          n_token,
-                                          lora_rank,
-                                          out_state_size,
-                                          onednn_matmul::type::with_bin_add);                                            
+                                            out_state_size,
+                                            fused_ops);
+        }
         onednn_kernels[key] = kernel;
         return onednn_kernels[key];
     }
@@ -448,17 +470,24 @@ struct lora_impl : multi_stage_primitive<lora> {
         const auto scracth_mem = instance.get_intermediates_memories().front();
 
         // src, weight, dst, bin
+        std::vector<dnnl::memory> bin_mems_a = {convert2dnnl(lora_alpha_mem, {static_cast<int>(1), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab)};
         kernel.gemm_a.forward(dnnl_stream, n_token,
                             convert2dnnl(lora_input, {static_cast<int>(n_token), static_cast<int>(in_state_size)}, dnnl::memory::format_tag::ab),
                             convert2dnnl(lora_a_mem, {static_cast<int>(in_state_size), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
                             convert2dnnl(scracth_mem, {static_cast<int>(n_token), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
-                            convert2dnnl(lora_alpha_mem, {static_cast<int>(1), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab));
+                            bin_mems_a);
 
+        std::vector<dnnl::memory> bin_mems_b = {convert2dnnl(main_input, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab)};
+        if (instance.get_fused_mem_count() > 0) {
+            OPENVINO_ASSERT(instance.get_fused_mem_count()==1, "Unsupported fuse pattern for lora.");
+            auto bin_mem = instance.fused_memory(0);
+            bin_mems_b.push_back(convert2dnnl(bin_mem, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab));
+        }
         kernel.gemm_b.forward(dnnl_stream, n_token,
                             convert2dnnl(scracth_mem, {static_cast<int>(n_token), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
                             convert2dnnl(lora_b_mem, {static_cast<int>(lora_rank), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab),
                             convert2dnnl(lora_output, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab),
-                            convert2dnnl(main_input, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab));
+                            bin_mems_b);
         if (instance.needs_completion_event())
             result_event = stream.enqueue_marker({});
 

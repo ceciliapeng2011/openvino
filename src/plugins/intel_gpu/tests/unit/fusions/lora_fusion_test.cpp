@@ -15,6 +15,8 @@
 #include "intel_gpu/plugin/remote_context.hpp"
 #include "intel_gpu/plugin/variable_state.hpp"
 
+#include "runtime/ocl/ocl_engine.hpp"
+
 #include <cmath>
 
 using namespace cldnn;
@@ -60,6 +62,14 @@ public:
         network_not_fused.set_input_data("state_b", state_b);
 
         auto context = std::make_shared<RemoteContextImpl>("GPU", std::vector<cldnn::device::ptr>{this->engine.get_device()});
+#ifdef ENABLE_ONEDNN_FOR_GPU
+        auto& context_engine = context->get_engine();
+        const auto& device_info = context_engine.get_device_info();
+        if (device_info.supports_immad) {
+            auto& ocl_engine = dynamic_cast<cldnn::ocl::ocl_engine&>(context_engine);
+            ocl_engine.create_onednn_engine({});
+        }
+#endif
         auto var_a =     std::make_shared<VariableState>(VariableStateInfo{"var_a",     get_lora_state_layout(p, 0)}, context, network_fused.get_shape_predictor());
         auto var_alpha = std::make_shared<VariableState>(VariableStateInfo{"var_alpha", get_lora_state_layout(p, 1)}, context, network_fused.get_shape_predictor());
         auto var_b =     std::make_shared<VariableState>(VariableStateInfo{"var_b",     get_lora_state_layout(p, 2)}, context, network_fused.get_shape_predictor());
@@ -130,7 +140,7 @@ TEST_P(lora_act_eltw, basic) {
         read_value{"rv_b", { input_info("state_b") }, "var_b", { get_lora_state_layout(p, 2) }},
         lora("lora", { input_info("fc_prim"), input_info("input"), input_info("rv_a"), input_info("rv_alpha"), input_info("rv_b") }, true),
 
-        activation("act", input_info("lora"), activation_func::swish),
+        activation("act", input_info("lora"), activation_func::swish, {1.f, 0.f}),
         data("eltw_data", get_mem(get_per_last_dim_layout(p), 1, 9)),
         eltwise("eltw", { input_info("act"), input_info("eltw_data") }, eltwise_mode::prod, p.input_type),
         reorder("reorder_bfyx", input_info("eltw"), p.planar_format, data_types::f32)

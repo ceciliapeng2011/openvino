@@ -64,11 +64,26 @@ bool lora_inst::is_onednn_lora_prefered() {
     if (p) {
         enable = std::atoi(p);
     }
-    return enable & !is_empty_lora();
+
+    const auto supports_immad = get_node().get_program().get_engine().get_device_info().supports_immad;
+    return enable & !is_empty_lora() & supports_immad;
+
     const auto& main_input_layout = get_input_layout(0);
     size_t batch = main_input_layout.get_shape().front();
     if (batch <= 1) {
         return false;
+    }
+
+    const auto& node = this->get_node();
+
+    for (auto& fo : node.get_fused_primitives()) {
+        if (fo.is_type<eltwise>() && fo.typed_desc<eltwise>()->mode != cldnn::eltwise_mode::sum) {
+            return false;
+        }
+
+        if (fo.is_type<activation>() && fo.typed_desc<activation>()->activation_function != cldnn::activation_func::swish) {
+            return false;
+        }
     }
 
     return true;
