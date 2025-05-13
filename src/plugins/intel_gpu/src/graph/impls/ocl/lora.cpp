@@ -14,10 +14,88 @@
 #include <oneapi/dnnl/dnnl_ocl.hpp>
 #include "intel_gpu/graph/fused_primitive_desc.hpp"
 
+#include "openvino/util/log.hpp"
+
 namespace cldnn {
 namespace ocl {
 dnnl::memory::data_type convert_data_type(cldnn::data_types dt);
 dnnl::memory convert2dnnl(const memory::ptr& ptr, const std::vector<int64_t>& dim, dnnl::memory::format_tag tag, int offset = 0) ;
+
+//========================================================================
+// ECOUT
+template<int id = 0>
+inline float get_delta_ms() {
+    static auto t0 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> dt = t1 - t0;
+    t0 = t1;
+    return dt.count();
+}
+
+// unit: ns/us/ms/s
+struct Nanoseconds {
+    double m_tvalue;
+    const char * m_unit;
+    Nanoseconds(double _ns) : m_tvalue(_ns) {
+        const char * unit = "(ns)";
+        if (m_tvalue > 1e3) {
+            m_tvalue *= 1e-3;
+            unit = "(us)";
+        }
+        if (m_tvalue > 1e3) {
+            m_tvalue *= 1e-3;
+            unit = "(ms)";
+        }
+        if (m_tvalue > 1e3) {
+            m_tvalue *= 1e-3;
+            unit = "(sec)";
+        }
+        m_unit = unit;
+    }
+    friend std::ostream& operator<<(std::ostream& os, const Nanoseconds& obj) {
+        os << obj.m_tvalue << obj.m_unit;
+        return os;
+    }
+};
+
+template <typename... Ts>
+void easy_cout(const char* file, const char* func, int line, Ts... args) {
+    std::string tag;
+    if (file != nullptr) {
+        std::string file_path(file);
+        std::string file_name(file);
+
+        auto last_sep = file_path.find_last_of('/');
+        if (last_sep == std::string::npos)
+            last_sep = file_path.find_last_of('\\');
+        if (last_sep != std::string::npos)
+            file_name = file_path.substr(last_sep + 1);
+
+        std::string file_name_with_line = file_name + ":" + std::to_string(line);
+        tag = file_name_with_line + " ";
+    }
+    if (func) tag = tag + func + "()";
+
+    std::stringstream ss;
+    int dummy[sizeof...(Ts)] = {(ss << args, 0)...};
+    (void)(dummy);
+    auto dt_value = get_delta_ms();
+    std::string dt_unit = "ms";
+    if (dt_value > 1000.0f) {
+        dt_value /= 1000.0f;
+        dt_unit = "sec";
+        if (dt_value > 60.0f) {
+            dt_value /= 60.0f;
+            dt_unit = "min";
+        }
+    }
+    std::cout << " \033[37;100m+" << std::fixed << std::setprecision(3) << dt_value << " " << dt_unit << "\033[36;40m " << tag << " \033[0m " << ss.str() << "" << std::endl;
+}
+
+#define ECOUT(...) easy_cout(__FILE__, __func__, __LINE__, __VA_ARGS__)
+#define ECOUT2(...) easy_cout(nullptr, __func__, __LINE__, __VA_ARGS__)
+
+//===============================================================
 
 dnnl::memory::data_type convert_data_type(cldnn::data_types dt) {
     switch (dt) {
@@ -85,12 +163,12 @@ struct onednn_matmul {
         postops.append_binary(dnnl::algorithm::binary_mul, bin_mul_md);
         return *this;
     }
-    onednn_matmul& post_op_bin_add(bool per_oc = true) {
+    onednn_matmul& post_op_bin_add(bool per_oc = true, bool broad_cast = false) {
         dnnl::memory::dim batch_size = m_M;
         if (batch_size == DNNL_RUNTIME_DIM_VAL)
             batch_size = 1024*1024; // big enough fake static batch
-
-        dnnl::memory::desc bin_add_md = dnnl::memory::desc(dnnl::memory::dims({batch_size, per_oc ? m_N : 1}), m_a_type, dnnl::memory::format_tag::ab);
+        
+        dnnl::memory::desc bin_add_md = dnnl::memory::desc(dnnl::memory::dims({broad_cast ? 1 : batch_size, per_oc ? m_N : 1}), m_a_type, dnnl::memory::format_tag::ab);
         postops.append_binary(dnnl::algorithm::binary_add, bin_add_md);
         return *this;
     }
@@ -128,7 +206,8 @@ struct onednn_matmul {
         none,
         with_bin_mul,
         with_bin_add,
-        with_bin_add_add,
+        with_bin_add_add_0,
+        with_bin_add_add_1,
         with_bin_add_mul,
         with_bin_add_silu_mul,
     };
@@ -147,7 +226,11 @@ struct onednn_matmul {
         if (t == post_ops_type::with_bin_add) {
             post_op_bin_add(true);
         }
-        if (t == post_ops_type::with_bin_add_add) {
+        if (t == post_ops_type::with_bin_add_add_0) {
+            post_op_bin_add(true);
+            post_op_bin_add(true, true);
+        }
+        if (t == post_ops_type::with_bin_add_add_1) {
             post_op_bin_add(true);
             post_op_bin_add(true);
         }
@@ -212,14 +295,17 @@ std::shared_ptr<const T> make_cacheable(dnnl::engine eng, CArgs... cargs) {
     if (it != cache.end()) {
         auto& wptr = it->second;
         sptr = wptr.lock();
+        GPU_DEBUG_TRACE_DETAIL << "make_cacheable HIT: " << typeid(T).name() << std::endl;
         if (!sptr) {
             sptr = std::make_shared<T>(eng, cargs...);
-            // ECOUT("make_cacheable re-constructed: ", typeid(T).name(), "(", cargs..., ")");
+            ECOUT("make_cacheable re-constructed: ", typeid(T).name(), "(", cargs..., ")");
+            GPU_DEBUG_TRACE_DETAIL << "make_cacheable re-constructed: " << typeid(T).name() << std::endl;
             wptr = sptr;
         }
     } else {
         sptr = std::make_shared<T>(eng, cargs...);
-        // ECOUT("make_cacheable constructed: ", typeid(T).name(), "(", cargs..., ")");
+        ECOUT("make_cacheable constructed: ", typeid(T).name(), "(", cargs..., ")");
+        GPU_DEBUG_TRACE_DETAIL << "make_cacheable constructed: " << typeid(T).name() << std::endl;
         cache.emplace(std::make_pair(key, std::weak_ptr<const T>(sptr)));
     }
     return sptr;
@@ -245,7 +331,8 @@ struct onednn_linear {
                                 int oc,
                                 onednn_matmul::post_ops_type post_ops) {
         OV_ITT_SCOPED_TASK(ov::intel_gpu::itt::domains::intel_gpu_plugin, openvino::itt::handle("onednn_linear::create()"));
-        auto mm = make_cacheable<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, post_ops);
+        // auto mm = make_cacheable<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, post_ops);
+        auto mm = std::make_shared<onednn_matmul>(eng, act_dtype, weight_dtype, batch, ic, oc, post_ops);
         onednn_linear linear;
         linear.mm = mm;
         linear.m_prim = mm->m_prim;
@@ -278,6 +365,7 @@ struct onednn_linear {
         auto postops_len = mm->postops.len();
         for (int bin_post_id = 0; bin_post_id < postops_len; bin_post_id++) {
             if (mm->postops.kind(bin_post_id) == dnnl::primitive::kind::binary) {
+                GPU_DEBUG_TRACE_DETAIL << "binary memory " << bin_post_id << ": " <<bin_mem->get() << ", ptr=" << bin_mem->get_data_handle() << std::endl;
                 args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(bin_post_id) | DNNL_ARG_SRC_1, *bin_mem});
                 bin_mem++;
             }
@@ -383,8 +471,8 @@ struct lora_impl : multi_stage_primitive<lora> {
 
     onednn_kernel& get_kernel(dnnl::stream& dnnl_stream, lora_inst& instance, int n_token, int lora_rank, int in_state_size, int out_state_size, int expert_no=0) {
         auto key = std::make_pair(n_token, expert_no);
-        if (onednn_kernels.count(key))
-            return onednn_kernels[key];
+        // if (onednn_kernels.count(key))
+        //     return onednn_kernels[key];
 
         auto activation_dt = convert_data_type(instance.input_memory_ptr(1)->get_layout().data_type);
         auto weights_dt = convert_data_type(instance.input_memory_ptr(2)->get_layout().data_type);
@@ -398,8 +486,12 @@ struct lora_impl : multi_stage_primitive<lora> {
             if (fusedops_len == 0) return onednn_matmul::post_ops_type::with_bin_add;
             if (fusedops_len == 1) {
                 const auto& fused_op = fused_ops.front();
-                if (fused_op.is_type<eltwise>() && fused_op.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::sum)
-                    return onednn_matmul::post_ops_type::with_bin_add_add;
+                if (fused_op.is_type<eltwise>() && fused_op.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::sum) {
+                    auto fused_mem = instance.fused_memory(0);
+                    auto fused_layout = fused_mem->get_layout();                    
+                    auto b = fused_layout.get_shape()[1];
+                    return (b==1) ? onednn_matmul::post_ops_type::with_bin_add_add_0 : onednn_matmul::post_ops_type::with_bin_add_add_1;
+                }
                 if (fused_op.is_type<eltwise>() && fused_op.typed_desc<eltwise>()->mode == cldnn::eltwise_mode::prod)
                     return onednn_matmul::post_ops_type::with_bin_add_mul;
             }
@@ -442,7 +534,7 @@ struct lora_impl : multi_stage_primitive<lora> {
     }
 
     event::ptr execute_stage(const std::vector<event::ptr>& events, lora_inst& instance) {
-        std::cout << "============================= execute onednn_lora ==============================" << std::endl;
+        GPU_DEBUG_TRACE_DETAIL << "============================= execute onednn_lora ==============================" << std::endl;
         auto& cur_net = instance.get_network();
         auto& stream = cur_net.get_stream();
         auto& dnnl_stream = stream.get_onednn_stream();
@@ -464,10 +556,17 @@ struct lora_impl : multi_stage_primitive<lora> {
 
         onednn_kernel& kernel = get_kernel(dnnl_stream, instance, n_token, lora_rank, in_state_size, out_state_size);
 
+        GPU_DEBUG_TRACE_DETAIL << "onednn_kernel gemm_b postops " << " [" << std::endl;
+        for (auto i =0; i < kernel.gemm_b.mm->postops.len(); i++) {
+            auto pp = kernel.gemm_b.mm->postops.kind(i);
+            GPU_DEBUG_TRACE_DETAIL << " " << static_cast<int>(pp) << ", " << std::endl;
+        }
+        GPU_DEBUG_TRACE_DETAIL << "]" << std::endl;
+
         const auto main_input = instance.input_memory_ptr(0);
         const auto lora_input = instance.input_memory_ptr(1);
         const auto& lora_output = instance.output_memory_ptr();
-        const auto scracth_mem = instance.get_intermediates_memories().front();
+        const auto scracth_mem = instance.get_intermediates_memories().back();
 
         // src, weight, dst, bin
         std::vector<dnnl::memory> bin_mems_a = {convert2dnnl(lora_alpha_mem, {static_cast<int>(1), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab)};
@@ -478,10 +577,23 @@ struct lora_impl : multi_stage_primitive<lora> {
                             bin_mems_a);
 
         std::vector<dnnl::memory> bin_mems_b = {convert2dnnl(main_input, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab)};
+
+        GPU_DEBUG_TRACE_DETAIL << "main_input memory " << ": " << main_input.get() << ", ptr=" << main_input->buffer_ptr() << " layout [" << main_input->get_layout() << "]" << std::endl;
+        for (size_t i = 0; i < instance.get_fused_mem_count(); i++) {
+            auto fused_mem = instance.fused_memory(i);
+            GPU_DEBUG_TRACE_DETAIL << "fused memory " << i << ": " << fused_mem->buffer_ptr() << " layout [" << fused_mem->get_layout() << "]" << std::endl;
+        }
+
         if (instance.get_fused_mem_count() > 0) {
             OPENVINO_ASSERT(instance.get_fused_mem_count()==1, "Unsupported fuse pattern for lora.");
             auto bin_mem = instance.fused_memory(0);
-            bin_mems_b.push_back(convert2dnnl(bin_mem, {static_cast<int>(n_token), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab));
+            bin_mems_b.push_back(convert2dnnl(bin_mem, {static_cast<int>(bin_mem->get_layout().get_shape()[1]), static_cast<int>(out_state_size)}, dnnl::memory::format_tag::ab));
+        }
+        for (auto bm : bin_mems_b) {
+            GPU_DEBUG_TRACE_DETAIL << "forward dnnlmemory : " << bm.get() << ", ptr=" << bm.get_data_handle() << std::endl;
+            for (auto d : bm.get_desc().get_dims()) {
+                GPU_DEBUG_TRACE_DETAIL << " " << d << std::endl;
+            }
         }
         kernel.gemm_b.forward(dnnl_stream, n_token,
                             convert2dnnl(scracth_mem, {static_cast<int>(n_token), static_cast<int>(lora_rank)}, dnnl::memory::format_tag::ab),
