@@ -30,12 +30,22 @@ struct PagedAttentionImplementationManager : public ImplementationManager {
             ov::element::i8,
         };
 
-        // Enable CM PA only in case of XAttention been enabled. May decouple them in future.
         auto desc = node.as<paged_attention>().get_primitive();
-        if (!desc->has_xattention) {
-            GPU_DEBUG_TRACE_DETAIL << "validate_impl() - false because we enable CM PA when XAttention is enabled. " << std::endl;
+        const auto& k_cache_layout = node.get_input_layout(PagedAttentionInputIdx::KEY_CACHE);
+        const auto& v_cache_layout = node.get_input_layout(PagedAttentionInputIdx::VALUE_CACHE);
+        bool use_same_cache_layout = k_cache_layout == v_cache_layout;
+
+        // Enable CM PA only in case of key_cache and value_cache have same layout.
+        if (!use_same_cache_layout) {
+            GPU_DEBUG_TRACE_DETAIL << "validate_impl() - false because key_cache and value_cache have different layout. " << std::endl;
             return false;
         }
+
+        // // Enable CM PA only in case of XAttention been enabled. May decouple them in future.
+        // if (!desc->has_xattention) {
+        //     GPU_DEBUG_TRACE_DETAIL << "validate_impl() - false because we enable CM PA when XAttention is enabled. " << std::endl;
+        //     return false;
+        // }
 
         // TODO: Remove this limitation when PA CM kernel supports more "heads_num / kv_heads_num" cases.
         // PA 2nd token CM kernel only supports case of "heads_num / kv_heads_num <= 8"
@@ -53,9 +63,9 @@ struct PagedAttentionImplementationManager : public ImplementationManager {
             return false;
         }
 
-        const auto& q_layout = node.get_input_layout(0);
-        const auto& k_layout = node.get_input_layout(1);
-        const auto& v_layout = node.get_input_layout(2);
+        const auto& q_layout = node.get_input_layout(PagedAttentionInputIdx::QUERY);
+        const auto& k_layout = node.get_input_layout(PagedAttentionInputIdx::KEY);
+        const auto& v_layout = node.get_input_layout(PagedAttentionInputIdx::VALUE);
         const auto& out_layout = node.get_output_layout(0);
         if (!everyone_is(format::bfyx, q_layout.format, k_layout.format, v_layout.format, out_layout.format)) {
             GPU_DEBUG_TRACE_DETAIL << __LINE__ << ": ov::intel_gpu::cm::PagedAttentionImplementationManager::validate_impl() - false " << std::endl;

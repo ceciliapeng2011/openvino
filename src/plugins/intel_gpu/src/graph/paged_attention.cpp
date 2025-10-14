@@ -41,8 +41,13 @@ std::vector<layout> paged_attention_inst::calc_output_layouts(paged_attention_no
     bool key_cache_compressed = impl_param.get_input_layout(key_cache_idx).data_type == ov::element::i8 ||
                                 impl_param.get_input_layout(key_cache_idx).data_type == ov::element::u8;
     size_t expected_block_size = paged_attention::block_size;
+    size_t value_cache_idx = cldnn::paged_attention::PagedAttentionInputIdx::VALUE_CACHE;
+    const auto& value_cache_ps = impl_param.get_input_layout(value_cache_idx).get_partial_shape();
     if (desc->has_xattention) {
         expected_block_size = paged_attention::block_size_xattn;
+        key_cache_idx -= 1;
+    } else if (key_cache_ps == value_cache_ps) {
+        expected_block_size = paged_attention::block_size;
         key_cache_idx -= 1;
     }
     if (key_cache_compressed && key_cache_quant_mode == ov::internal::CacheQuantMode::BY_CHANNEL) {
